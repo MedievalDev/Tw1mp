@@ -86,8 +86,9 @@ braucht daher ebenfalls erreichbare Ports oder alle Spieler nutzen ein VPN.
 ## What was finished compared to TW1CS 0.2.0
 
 * Implemented missing commands: `/whois`, `/update`, `/joinchatchannel`,
-  `/leavechatchannel`, `/nick` (graceful response), `/error` responses for
-  full/running/password-protected games
+  `/leavechatchannel`, `/nick` (graceful response) — while keeping the
+  reference server's silent declines (e.g. joining a full game) byte-for-byte
+  so the real client sees nothing it hasn't seen before
 * Proper login/registration error messages instead of `TESTERROR`
 * Configuration file support (previously commented-out stubs)
 * Chat channels are now real objects with names (required for `/whois` and
@@ -100,8 +101,13 @@ braucht daher ebenfalls erreichbare Ports oder alle Spieler nutzen ein VPN.
   network I/O is kept out of locked sections
 * Latin-1 tolerant text handling (umlauts in chat no longer kill the
   connection thread)
+* Hardening: size caps on pre-login packets and command blobs, bounded
+  decompression, malformed `Config.ini` values fall back to defaults instead
+  of aborting startup, login race fixed (no double sessions per account),
+  keepalive `/nop` on by default (like the original official server) so dead
+  connections get cleaned up
 * Restructured into a package with logging, CLI (`--root`, `--port`,
-  `--log`), and a test suite (29 tests) with a protocol-level fake client
+  `--log`), and a test suite (35 tests) with a protocol-level fake client
 
 ## License
 

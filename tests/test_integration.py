@@ -111,6 +111,27 @@ class TestLogin(ServerFixture):
         err, _ = cli.login('alice', 'pw')
         self.assertEqual(err, 1)
 
+    def test_compat_login_errors(self):
+        self.connect('alice').close()
+        self.server.config.compat_login_errors = True
+        cli = TestClient(self.port, serial=(b'alice' * 8)[:8],
+                         guid=(b'alice' * 16)[:16])
+        self.clients.append(cli)
+        cli.handshake()
+        err, res = cli.login('alice', 'wrongpw')
+        self.assertEqual(err, 1)
+        self.assertIn(b'TESTERROR', res)
+
+    def test_oversized_login_packet_closes_connection(self):
+        import socket
+        import struct
+        sock = socket.create_connection(('127.0.0.1', self.port), timeout=5)
+        try:
+            sock.sendall(struct.pack('<I', 0xFFFFFFF0))
+            self.assertEqual(sock.recv(4096), b'')  # server hung up
+        finally:
+            sock.close()
+
 
 class TestChannelsAndChat(ServerFixture):
     def test_join_channel_and_chat(self):
@@ -245,6 +266,20 @@ class TestGames(ServerFixture):
         bob.send_cmd('/joingame "Secret" "wrong"')
         got = bob.wait_for(b'/error')
         self.assertIn(b'/error badGamePassword "Secret"', got)
+
+    def test_duplicate_game_name_declined_silently(self):
+        alice = self.connect('alice')
+        bob = self.connect('bob')
+        self.join_channel(alice)
+        self.join_channel(bob)
+        self.create_game(alice)
+        bob.wait_for(b'$game')
+        bob.drain(0.4)
+        bob.send_cmd('/requestcreategame "MyGame"')
+        got = bob.drain(0.6)
+        # reference-server parity: no bytes at all for a name collision
+        self.assertNotIn(b'/creategame', got)
+        self.assertNotIn(b'/error', got)
 
     def test_leave_game_removes_it(self):
         alice = self.connect('alice')

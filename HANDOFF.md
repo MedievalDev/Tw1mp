@@ -6,7 +6,7 @@ Stand: 2026-07-17 · Branch `claude/two-worlds-multiplayer-server-otqmlr` · [PR
 
 - Server komplett implementiert (Fortführung von buglords CC0-Referenzserver
   [TW1CS 0.2.0](https://github.com/buglord/Two-Worlds-1-Misc-Projects/tree/main/Lobby%20Server)).
-- 29 automatisierte Tests grün, inklusive simuliertem Spiel-Client auf
+- 35 automatisierte Tests grün, inklusive simuliertem Spiel-Client auf
   Protokollebene (`tests/tw1_client.py`).
 - **Noch nie gegen den echten Spiel-Client getestet** — genau das ist der
   nächste Schritt. Alles Client-seitige unten ist aus buglords Doku/Code
@@ -85,12 +85,42 @@ Beim ersten Start entstehen im Arbeitsverzeichnis: `Config.ini`,
 Kommandos, die der echte Client sendet, aber weder Doku noch Referenzserver
 kennen. Die sind Gold wert fürs Nachrüsten.
 
+## Ergebnis der Vorab-Review (Multi-Agent, gegen Referenzserver verifiziert)
+
+Vor dem Handoff lief eine byte-genaue Vergleichs-Review gegen buglords
+`TW1CS.py` (das einzige, was je mit dem echten Client lief). Konsequenzen:
+
+- **Erfundene `/error`-Tokens entfernt:** Volle/laufende Spiele und
+  Namenskonflikte werden jetzt wieder **stumm** abgelehnt wie im
+  Referenzserver; nur `badGamePassword` wird gesendet (das einzige Token,
+  das der echte Client nachweislich kennt).
+- **Leerer `/updheropos`-Tick** wird wieder wie im Referenzserver gesendet
+  (Byte-Parität).
+- **Login-Fehlertexte:** Struktur identisch, aber die Texte sind lesbarer
+  als das feld-getestete `TESTERROR` des Referenzservers. **Falls nach dem
+  Verbinden kein Login-Fenster erscheint** oder Fehlermeldungen den Client
+  stören: in `Config.ini` `compat_login_errors = true` setzen → es wird
+  wieder exakt `TESTERROR` gesendet.
+- **Neue Pfade, die der Referenzserver nie bedient hat** (er ignorierte die
+  Kommandos komplett): Chat-Kanal-Wechsel (`/joinchatchannel`), `/whois`,
+  `/update`, `/nick`. Die Antwortformate folgen der Protokoll-Doku bzw.
+  bekannten Nachrichten — aber genau diese vier beim Test bewusst
+  ausprobieren und auf Auffälligkeiten achten.
+- **Härtung:** Login-Race behoben (keine Doppel-Sessions), Größen-Limits
+  für Pakete/Blobs vor dem Login, kaputte `Config.ini`-Werte crashen den
+  Start nicht mehr, `/nop`-Keepalive standardmäßig an (räumt tote
+  Verbindungen auf; der offizielle Server sendete es auch alle 3 s).
+- **Gewollte Abweichung:** Registrierung mit leerem Passwort/Namen wird
+  abgelehnt (der Referenzserver hätte den Account angelegt).
+
 ## Bewusste Annahmen (beim Test im Blick behalten)
 
 - `getguildrankpoints`/GRP: feste Werte wie im Referenzserver (Seed 0) —
   laut Doku „scheint zu funktionieren“, nötig für Spielstart.
 - `/startgame` ist serverseitig ein No-op; der Statuswechsel passiert über
   `/startinggame` (wie in TW1CS).
+- Beitritt zu vollen/laufenden Spielen und Namenskonflikte beim Erstellen:
+  stumme Ablehnung (Byte-Parität zum Referenzserver).
 - `/nick` wird höflich abgelehnt (Umbenennen würde Account-/Lobby-Keys brechen).
 - Spielstands-Zugriff (`/getplayerdata`, `/setplayerdata`) nur auf den
   eigenen Namen (TW1CS hatte Fremdzugriff als offenes TODO).

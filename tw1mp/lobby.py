@@ -130,10 +130,13 @@ class GameEntry:
                 {'target': list(self.parent.userlist), 'message': msg})
 
     def addUser(self, con, pasw):
+        # Full/already-running games are declined silently, matching the
+        # reference server; 'badGamePassword' is the only /error token the
+        # real client is known to accept.
         if len(self.userlist) >= self.maxplayers:
-            return em(f'/error gameFull "{self.gname}"')
+            return None
         if self.status and not self.npj:
-            return em(f'/error gameRunning "{self.gname}"')
+            return None
         if self.password != pasw:
             return em(f'/error badGamePassword "{self.gname}"')
         self.userlist.append(con)
@@ -231,10 +234,12 @@ class GameChannel:
     def requestCreateGame(self, con, gameName):
         if con.user.requestedGame or con.user.game:
             con.user.stopGame()
+        # Name collisions are declined silently, matching the reference
+        # server (an unknown /error token could confuse the real client).
         if gameName in self.gameRequests and self.gameRequests[gameName] is not con:
-            return em(f'/error gameNameInUse "{gameName}"')
+            return None
         if gameName in self.games:
-            return em(f'/error gameNameInUse "{gameName}"')
+            return None
         self.gameRequests[gameName] = con
         con.user.requestedGame = gameName
         return em(f'/creategame "{gameName}"')
@@ -317,8 +322,8 @@ class GameChannel:
                 msgchunks.append(f'{ucon.user.idnum:x}#{ucon.user.posdata}')
                 ucon.user.poschanged = False
         self.dirty = False
-        if not msgchunks:
-            return
+        # The reference server broadcasts '/updheropos ' even when no
+        # positions remain (e.g. the mover just left); keep byte parity.
         msg = em('/updheropos ' + ' '.join(msgchunks))
         md.add({'target': tg, 'message': msg})
 

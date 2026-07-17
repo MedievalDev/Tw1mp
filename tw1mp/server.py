@@ -20,6 +20,10 @@ from .protocol import (RECV_BUF_LEN, em, parse_dstr, read_compressed_blob,
 log = logging.getLogger('tw1mp.server')
 
 _SHORT_TIMEOUT = 0.1
+# Sanity caps for client-supplied sizes (real packets are far smaller).
+_MAX_LOGIN_PACKET = 0x10000       # 64 KiB compressed login packet
+_MAX_LOGIN_PLAIN = 0x100000       # 1 MiB decompressed login payload
+_MAX_BLOB = 0x1000000             # 16 MiB command blob (herodata/playerdata)
 
 _LOGIN_ERRORS = {
     database.ERR_BAD_CREDENTIALS: 'Wrong username or password',
@@ -68,7 +72,27 @@ class ConnectionHandler(socketserver.BaseRequestHandler):
         self.user = None
         self.guid = None
         self.data = b''
+        self._reserved = None
         self.SK = bytearray(protocol.SERIAL_KEY_BASE)
+
+    def _reserveName(self, username):
+        """Claim the username in activeUsers before the (slow) credential
+        check, so two concurrent logins can't both pass the online check."""
+        state = self.server.state
+        with state.lock:
+            if username in state.activeUsers:
+                return False
+            state.activeUsers[username] = self
+            self._reserved = username
+            return True
+
+    def _releaseName(self):
+        state = self.server.state
+        with state.lock:
+            if self._reserved and \
+                    state.activeUsers.get(self._reserved) is self:
+                del state.activeUsers[self._reserved]
+            self._reserved = None
 
     def _recv(self, buflen=RECV_BUF_LEN):
         chunk = self.request.recv(buflen)
@@ -79,6 +103,8 @@ class ConnectionHandler(socketserver.BaseRequestHandler):
     def readBlob(self, size):
         """Read `size` raw bytes following a command."""
         size = int(size)
+        if size < 0 or size > _MAX_BLOB:
+            raise ConnectionResetError(f'implausible blob size {size}')
         self.request.settimeout(None)
         while len(self.data) < size:
             self.data += self._recv()
@@ -103,9 +129,15 @@ class ConnectionHandler(socketserver.BaseRequestHandler):
         while len(self.data) < 4:
             self.data += self._recv()
         pack_len = struct.unpack('<I', self.data[0:4])[0]
+        if pack_len < 8 or pack_len > _MAX_LOGIN_PACKET:
+            raise ConnectionResetError(
+                f'implausible login packet length {pack_len}')
         while len(self.data) < pack_len:
             self.data += self._recv()
-        res = zlib.decompress(self.data[4:pack_len])
+        dcmp = zlib.decompressobj()
+        res = dcmp.decompress(self.data[4:pack_len], _MAX_LOGIN_PLAIN)
+        if dcmp.unconsumed_tail:
+            raise ConnectionResetError('login packet decompresses too large')
         self.data = self.data[pack_len:]
         return res
 
@@ -143,8 +175,12 @@ class ConnectionHandler(socketserver.BaseRequestHandler):
                 err = self._attemptLogin(username, password)
                 if err == database.ERR_BAD_CREDENTIALS and \
                         self.server.config.auto_register:
-                    err = self._attemptRegister(username, password,
-                                                '', '', 1, 0, '')
+                    rerr = self._attemptRegister(username, password,
+                                                 '', '', 1, 0, '')
+                    if rerr != database.ERR_USER_EXISTS:
+                        err = rerr
+                    # else: existing account, wrong password — keep the
+                    # original credentials error
             if err == database.OK:
                 cfg = self.server.config
                 self.request.sendall(server_welcome_packet(
@@ -153,6 +189,9 @@ class ConnectionHandler(socketserver.BaseRequestHandler):
                 msg = _LOGIN_ERRORS.get(err, 'Login failed')
                 log.info('Login failed for %r from %s: %s',
                          username, self.client_address[0], msg)
+                if self.server.config.compat_login_errors:
+                    # exact string the reference server was field-tested with
+                    msg = 'TESTERROR'
                 self.request.sendall(login_error_packet(msg))
 
     def _attemptLogin(self, username, password):
@@ -162,11 +201,13 @@ class ConnectionHandler(socketserver.BaseRequestHandler):
             return database.ERR_NO_USERNAME
         if len(password) < 1:
             return database.ERR_SHORT_PASSWORD
-        if self.server.getPlayer(username):
+        if not self._reserveName(username):
             return database.ERR_ALREADY_ONLINE
         err = self.server.db.login(username, self.SK, password)
         if err == database.OK:
             self.user = User(username, self, self.server.state)
+        else:
+            self._releaseName()
         return err
 
     def _attemptRegister(self, username, password, email, location, age,
@@ -175,12 +216,14 @@ class ConnectionHandler(socketserver.BaseRequestHandler):
             return database.ERR_NO_USERNAME
         if len(password) < 1:
             return database.ERR_SHORT_PASSWORD
-        if self.server.getPlayer(username):
+        if not self._reserveName(username):
             return database.ERR_ALREADY_ONLINE
         err = self.server.db.register(username, self.SK, password, email,
                                       location, age, gender, description)
         if err == database.OK:
             self.user = User(username, self, self.server.state)
+        else:
+            self._releaseName()
         return err
 
     # -- lobby phase ----------------------------------------------------
@@ -227,6 +270,7 @@ class ConnectionHandler(socketserver.BaseRequestHandler):
             with self.server.state.lock:
                 self.user.disconnect(self.server)
         else:
+            self._releaseName()  # in case login aborted mid-attempt
             log.info('Connection from %s closed before login',
                      self.client_address[0])
 
@@ -269,7 +313,8 @@ class CoreServer(socketserver.ThreadingTCPServer):
     def debug_dict_players(self):
         with self.state.lock:
             return {name: con.debug_dict()
-                    for name, con in self.state.activeUsers.items()}
+                    for name, con in self.state.activeUsers.items()
+                    if con.user}  # skip reservations of in-flight logins
 
     def debug_dict_towns(self):
         with self.state.lock:
