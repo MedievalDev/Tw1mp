@@ -255,6 +255,33 @@ einer Solo-Spielmap ohne weitere Peers sendet der Client nichts (korrektes
 Verhalten). Der Pfad ist implementiert und reviewt; die Stadt-
 Positions-Broadcasts bzw. der 2-Spieler-Fall werden ihn ausüben.
 
+## 2-Maschinen-Test (LAN, stock DirectPlay) — Ergebnis
+
+Am 2026-07-19 mit zwei echten Rechnern im LAN getestet (Haupt-PC +
+Surface Pro 7), beide über den TW1MP-Lobby-Server:
+
+- **Lobby + Matchmaking: voll funktionsfähig.** Beide loggen sich ein
+  (verschiedene Namen, gleicher Key dank `bind_serial=false`), sehen sich
+  in derselben Stadt inkl. gegenseitiger Positionsbewegung, einer erstellt
+  ein Spiel, der andere sieht und tritt bei, die DirectPlay-Adresse wird
+  übergeben. **Beide waren gemeinsam in der Mission-Map** — der komplette
+  Community-Server-Stack ist damit end-to-end validiert.
+- **Aber: stock `dpnet.dll` ist instabil.** Der Host crasht teils schon
+  beim Erstellen (`/requestcreategame` → sofort disconnect), und die
+  Surface ist mitten im gemeinsamen Spiel abgestürzt — beide Male
+  bestätigt `APPCRASH … dpnet.dll`. Der DISM/sfc-Fix hat die 32-bit-dpnet
+  nie wirklich getauscht; sie bleibt auf modernem Windows unzuverlässig.
+- **Adress-Fund:** Der Host bewirbt als *primäre* DirectPlay-Adresse ein
+  Phantom `192.168.0.58` (kein Live-Adapter; wahrscheinlich Altlast eines
+  Virtual-Adapters wie Hamachi), die korrekte LAN-IP `192.168.1.136` nur
+  als `alt=`. Fatal war das nicht (DirectPlay verband über den Fallback),
+  aber unsere Replacement-DLL wird die richtige IP direkt bewerben.
+
+**Fazit:** 2-Spieler-Machbarkeit bewiesen; die Unzuverlässigkeit liegt
+allein an stock DirectPlay. Der Weg zu *stabilem* 2-Spieler ist Phase 3 —
+unsere Replacement-DLL um echtes UDP-Transport erweitern, dann hängt nichts
+mehr an der kaputten Windows-dpnet.
+
 ## Offene Phasen
 
 - **Phase 2:** SendTo→RECEIVE-Loopback in der Stadt ausüben (Positions-
