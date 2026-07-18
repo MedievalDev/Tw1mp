@@ -3,3 +3,13 @@ __pycache__/
 ServerData.db
 PlayerData/
 Config.ini
+# Local registry backups from setup (contain the machine's server list)
+*.reg
+# Runtime logs
+*.log
+directplay_fix_log.txt
+# Native build artifacts (build the shim from source via build.bat)
+*.obj
+*.exp
+*.lib
+*.dll

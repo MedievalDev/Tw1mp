@@ -36,6 +36,9 @@ protocol documentation by [buglord](https://github.com/buglord):
 * Optional HTTP status API (JSON `/status`, debug listings, player data
   download) — disabled by default
 * Logging, graceful shutdown with player notification
+* Desktop UI (Windows): start/stop, live log, connected players, minimise to
+  the notification area, and character management — download an account from a
+  live server (e.g. the official one) and import it locally
 * Test suite with a simulated game client covering the whole protocol
 
 ## Quickstart
@@ -47,6 +50,10 @@ git clone https://github.com/MedievalDev/Tw1mp.git
 cd Tw1mp
 python3 TW1MP-Server.py
 ```
+
+On Windows you can instead double-click **`TW1MP-UI.pyw`** for the desktop
+front-end (`--tray` starts it minimised, `--no-start` opens it without
+launching the server).
 
 On first start a `Config.ini` is created next to the server; edit it and
 restart to change the server name, MOTD, ports and other settings.
@@ -61,27 +68,84 @@ python3 -m unittest discover -s tests
 
 ## Connecting the game / Verbindung mit dem Spiel
 
-**English:** The retail game connects to the official lobby hosts on TCP port
-17171 (historically e.g. `hawk.2-worlds-us.com`). To play on a community
-server, redirect that hostname to your server's IP in the client's
-`hosts` file (`C:\Windows\System32\drivers\etc\hosts`), e.g.:
+**English:** No `hosts` file editing is needed. The game reads its server list
+from the registry, so a community server can simply be added as another entry.
+On the client, under
+`HKEY_CURRENT_USER\SOFTWARE\Reality Pump\TwoWorlds\Network`, prepend your
+server to `EarthNet_ServersAddresses`, which is a string of `"name""host"`
+pairs:
 
 ```
-203.0.113.10 hawk.2-worlds-us.com
+"My Server""203.0.113.10""WarNet Europe""warnet.2-worlds.com"
 ```
 
-Forward TCP port 17171 on the server. The lobby only handles matchmaking,
-chat and player data — the actual game session runs peer-to-peer over
-DirectPlay between the players, so players may additionally need direct
-connectivity to the game host (port forwarding on the hosting player's side,
-or a VPN such as Radmin/ZeroTier for everyone).
+The server then appears by name in the game's server selection dialog.
+`EarthNet_ServerPort` (default 17171) is the port the client dials; forward it
+on the server. Values are per-user (HKCU), so no administrator rights are
+needed — back up the key before editing.
 
-**Deutsch:** Das Spiel verbindet sich auf TCP-Port 17171 mit dem offiziellen
-Lobby-Host. Um einen Community-Server zu nutzen, leite den Hostnamen in der
-`hosts`-Datei des Clients auf die IP deines Servers um (siehe Beispiel oben)
-und gib Port 17171 auf dem Server frei. Die eigentliche Spielsitzung läuft
-danach Peer-to-Peer über DirectPlay zwischen den Spielern — der Spiel-Host
-braucht daher ebenfalls erreichbare Ports oder alle Spieler nutzen ein VPN.
+The lobby only handles matchmaking, chat and player data. The actual game
+session runs peer-to-peer over **DirectPlay** between the players, and the
+host advertises its *private* LAN address (the official servers used a NAT
+resolver, which this server does not provide). So: same LAN works out of the
+box, over the internet everyone needs a VPN (ZeroTier, Tailscale, Hamachi) or
+port forwarding on the hosting player's side.
+
+**Note:** Hosting a game requires the Windows **DirectPlay** legacy component.
+Without it the client crashes in `dpnet.dll` when starting a session — against
+this server *and* the official ones. Enable it in an elevated PowerShell with
+`Enable-WindowsOptionalFeature -Online -FeatureName DirectPlay -All`, then
+reboot.
+
+**Deutsch:** Die `hosts`-Datei wird nicht gebraucht. Das Spiel liest seine
+Serverliste aus der Registry: Unter
+`HKEY_CURRENT_USER\SOFTWARE\Reality Pump\TwoWorlds\Network` einen Eintrag vorn
+an `EarthNet_ServersAddresses` anhängen (Format `"Name""Host"`, siehe oben) —
+der Server erscheint dann im Auswahldialog des Spiels. Port aus
+`EarthNet_ServerPort` (Standard 17171) am Server freigeben. Kein Admin nötig,
+da HKCU; vorher sichern.
+
+Die eigentliche Spielsitzung läuft Peer-to-Peer über **DirectPlay**, wobei der
+Host seine *private* LAN-Adresse bewirbt. Im selben LAN funktioniert das
+direkt, über Internet braucht es ein VPN (ZeroTier, Tailscale, Hamachi) oder
+Portfreigaben beim hostenden Spieler. Zum Hosten muss außerdem die
+Windows-Komponente **DirectPlay** aktiviert sein, sonst stürzt der Client beim
+Spielstart in `dpnet.dll` ab — auch auf den offiziellen Servern.
+
+## Bringing a character over from an official server
+
+Multiplayer characters live on the server, not in the local save folder, so
+moving one across means downloading it from the old server and importing it
+here. In `TW1MP-UI.pyw` this is the *Characters* tab: pick the source server
+and profile, press **Download and import**. It reuses the serial key and the
+login the game stored on this machine, so it only works where the game is
+installed, and the account must already exist locally (log in once). The
+character it replaces is kept under `PlayerData/backup/`.
+
+The same works headless:
+
+```python
+from tw1mp.config import Config
+from tw1mp.database import Database
+from tw1mp import savegame
+
+name, blob = savegame.fetch_from_registry(server='warnet.2-worlds.com')
+db = Database(Config(root='.'))
+savegame.import_playerdata(db, name, blob)
+```
+
+Reading the character is a normal `/getplayerdata` login, so it neither
+changes nor removes anything on the source server.
+
+## Verified against the real game client
+
+Tested with Two Worlds 1.7 (Steam "Epic Edition"): connecting, auto-login and
+registration, MOTD, the town list, entering towns, chat, profile data,
+character up/download and guild rank points all work. Two commands the real
+client sends are documented nowhere and are ignored (as the reference server
+did): `/ladder` and `/guildsladder`. Starting a hosted game could not be
+verified because the client crashes in `dpnet.dll` on this machine — identical
+against the official servers, see the DirectPlay note above.
 
 ## What was finished compared to TW1CS 0.2.0
 

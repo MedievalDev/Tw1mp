@@ -1,0 +1,4 @@
+LIBRARY dpnetshim
+EXPORTS
+    DllGetClassObject   PRIVATE
+    DllCanUnloadNow     PRIVATE

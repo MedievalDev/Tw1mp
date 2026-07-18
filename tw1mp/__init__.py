@@ -6,4 +6,4 @@ lobby servers. Derived from the CC0-licensed reference implementation
 https://github.com/buglord/Two-Worlds-1-Misc-Projects
 """
 
-__version__ = '1.0.0'
+__version__ = '1.2.0'
