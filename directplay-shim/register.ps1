@@ -2,6 +2,10 @@
 # HKCU\Software\Classes takes precedence over HKLM for this user, so no
 # administrator rights are needed and nothing system-wide is touched.
 #
+# Two Worlds is a 32-bit process, so it reads the WOW6432Node view of the
+# class registry - registering under the plain CLSID path is invisible to
+# it. We therefore write the WOW6432Node branch explicitly.
+#
 #   .\register.ps1            -> activate the shim
 #   .\register.ps1 -Remove    -> restore the stock behaviour
 param([switch]$Remove)
@@ -15,9 +19,9 @@ $clsids = [ordered]@{
 }
 
 foreach ($id in $clsids.Keys) {
-    $key = "HKCU:\Software\Classes\CLSID\$id\InprocServer32"
+    $key = "HKCU:\Software\Classes\WOW6432Node\CLSID\$id\InprocServer32"
     if ($Remove) {
-        $parent = "HKCU:\Software\Classes\CLSID\$id"
+        $parent = "HKCU:\Software\Classes\WOW6432Node\CLSID\$id"
         if (Test-Path $parent) {
             Remove-Item $parent -Recurse -Force
             "entfernt: $($clsids[$id])"
