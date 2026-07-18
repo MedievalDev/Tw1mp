@@ -91,6 +91,22 @@ Beim Verbinden erscheint dann der Login/Registrier-Dialog → dort Benutzername
 **`surface`** (o. Ä.) mit beliebigem Passwort registrieren. Der Server legt den
 Account automatisch an.
 
+### 4b. NAT-Resolver abschalten (für LAN-Direktverbindung — WICHTIG)
+Für ein LAN-Spiel muss die DirectPlay-P2P-Verbindung **direkt** über die
+LAN-IP laufen, nicht über den externen NAT-Resolver (`warnet.2-worlds.com`).
+Sonst schlägt der Beitritt mit „Verbindung fehlgeschlagen" fehl, obwohl man
+sich in der Lobby sieht. In einer normalen PowerShell (kein Admin nötig):
+```powershell
+$k = 'HKCU:\SOFTWARE\Reality Pump\TwoWorlds\Network'
+Set-ItemProperty $k -Name EarthNet_UseNATResolver        -Value 0 -Type DWord
+Set-ItemProperty $k -Name EarthNet_AddNATResolverInHost  -Value 0 -Type DWord
+Set-ItemProperty $k -Name EarthNet_AddNATResolverInClient -Value 0 -Type DWord
+Get-ItemProperty $k | Select-Object EarthNet_UseNATResolver,EarthNet_AddNATResolverInHost,EarthNet_AddNATResolverInClient
+```
+(Falls der Network-Key noch nicht existiert: erst einmal ins Multiplayer-Menü
+gehen, dann diesen Schritt.) **Nach der Änderung Two Worlds neu starten** —
+die Netzwerkeinstellungen werden nur beim Spielstart gelesen.
+
 ### 5. Firewall fürs Spiel
 Two Worlds hat meist schon eingehende Firewall-Regeln von Steam. Prüfen:
 ```powershell
