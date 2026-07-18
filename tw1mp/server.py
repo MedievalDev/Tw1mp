@@ -51,7 +51,11 @@ class MessageDistributor:
             try:
                 targets = command.get('target', [])
                 msg = command.get('message')
-                if msg:
+                if msg and targets:
+                    if msg != b'/nop\x00' and log.isEnabledFor(logging.DEBUG):
+                        log.debug('TX* -> %s: %r',
+                                  [c.user.name if c.user else '?'
+                                   for c in targets], msg)
                     for con in targets:
                         con._sQueue.put(msg)
             except Exception:
@@ -73,6 +77,7 @@ class ConnectionHandler(socketserver.BaseRequestHandler):
         self.guid = None
         self.data = b''
         self._reserved = None
+        self.use_modded = False  # this session runs on a modified character
         self.SK = bytearray(protocol.SERIAL_KEY_BASE)
 
     def _reserveName(self, username):
@@ -252,8 +257,10 @@ class ConnectionHandler(socketserver.BaseRequestHandler):
                     break  # incomplete command, need more data
                 cmd = self.data[0:cmd_l].decode('latin-1')
                 self.data = self.data[cmd_l + 1:]
+                log.debug('RX %s: %r', self.user.name, cmd)
                 response = self.server.compars.parse(cmd, self)
                 if response:
+                    log.debug('TX %s: %r', self.user.name, response)
                     self.request.sendall(response)
                 # Skip stray compressed blobs after commands we don't
                 # consume (defensive; shouldn't occur in practice).

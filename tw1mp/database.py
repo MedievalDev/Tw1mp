@@ -34,6 +34,8 @@ _SQL_registerUser = 'INSERT INTO userTable VALUES (?,?,?,?,?,?,?,?,?,?,?)'
 _SQL_getLogin = 'SELECT username, passHash, uniqueSalt, hashIter FROM userTable WHERE rowid = ?'
 _SQL_getInfo = ('SELECT email, location, yob, gender, description '
                 'FROM userTable WHERE username = ?')
+_SQL_listUsers = ('SELECT username, lastLogin FROM userTable '
+                  'ORDER BY username COLLATE NOCASE')
 _SQLUPD_info = ('UPDATE userTable SET email = ?, location = ?, yob = ?, '
                 'gender = ?, description = ? WHERE username = ?')
 _SQLUPD_passHash = 'UPDATE userTable SET passHash = ?, hashIter = ? WHERE rowid = ?'
@@ -41,6 +43,9 @@ _SQL_loginUpdate = 'UPDATE userTable SET lastLogin = ? WHERE rowid = ?'
 _SQL_formID = 'SELECT rowid from formTable WHERE form = ?'
 _SQLADD_formID = 'INSERT INTO formTable VALUES (?)'
 _FORM_PDFile = '{:x}_{:x}.bin'  # PlayerData/userID_formID.bin
+# A modified ("cheat") variant living next to the original; only ever
+# served to a player who is alone on the server.
+_FORM_PDFile_Modded = '{:x}_{:x}.modded.bin'
 
 # Login/registration results
 OK = 0
@@ -95,7 +100,7 @@ class Database:
 
     # -- playerdata ---------------------------------------------------
 
-    def _playerdata_file(self, name, form, create):
+    def _playerdata_file(self, name, form, create, modded=False):
         with self.lock:
             cur = self.db.cursor()
             try:
@@ -111,37 +116,68 @@ class Database:
                     fidres = cur.execute(_SQL_formID, (form,)).fetchone()
             finally:
                 cur.close()
-            filename = _FORM_PDFile.format(uidres[0], fidres[0])
+            template = _FORM_PDFile_Modded if modded else _FORM_PDFile
+            filename = template.format(uidres[0], fidres[0])
             fpath = os.path.join(self.cfg.playerdata_path, filename)
             if os.path.exists(fpath) or create:
                 return fpath
             return None
 
-    def get_playerdata(self, name, form):
-        path = self._playerdata_file(name, form, False)
-        if not path:
-            return b''
-        try:
-            with open(path, 'rb') as f:
-                return f.read()
-        except OSError:
-            log.exception('Failed reading playerdata for %s', name)
-            return b''
+    def get_playerdata(self, name, form, modded=False):
+        # File body I/O stays under the lock so a UI-side import and a
+        # server-side save for the same user serialize.
+        with self.lock:
+            path = self._playerdata_file(name, form, False, modded)
+            if not path:
+                return b''
+            try:
+                with open(path, 'rb') as f:
+                    return f.read()
+            except OSError:
+                log.exception('Failed reading playerdata for %s', name)
+                return b''
 
-    def set_playerdata(self, name, form, data):
-        path = self._playerdata_file(name, form, True)
-        if not path:
-            log.warning('No playerdata path for unknown user %s', name)
-            return False
-        try:
-            with open(path, 'wb') as f:
-                f.write(data)
-            return True
-        except OSError:
-            log.exception('Failed writing playerdata for %s', name)
-            return False
+    def set_playerdata(self, name, form, data, modded=False):
+        with self.lock:
+            path = self._playerdata_file(name, form, True, modded)
+            if not path:
+                log.warning('No playerdata path for unknown user %s', name)
+                return False
+            try:
+                with open(path, 'wb') as f:
+                    f.write(data)
+                return True
+            except OSError:
+                log.exception('Failed writing playerdata for %s', name)
+                return False
+
+    def has_modded_playerdata(self, name, form):
+        with self.lock:
+            return self._playerdata_file(name, form, False, True) is not None
+
+    def delete_modded_playerdata(self, name, form):
+        with self.lock:
+            path = self._playerdata_file(name, form, False, True)
+            if not path:
+                return False
+            try:
+                os.remove(path)
+                return True
+            except OSError:
+                log.exception('Failed deleting modded playerdata for %s', name)
+                return False
 
     # -- accounts -----------------------------------------------------
+
+    def list_users(self):
+        """All accounts as [(username, lastLogin or None), ...]."""
+        with self.lock:
+            cur = self.db.cursor()
+            try:
+                return [(row[0], row[1]) for row in
+                        cur.execute(_SQL_listUsers).fetchall()]
+            finally:
+                cur.close()
 
     def login(self, username, serial, password):
         """Verify credentials. Returns OK or an ERR_* code."""

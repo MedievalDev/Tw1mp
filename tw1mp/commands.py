@@ -174,7 +174,17 @@ class CommandParser:
         if name != con.user.name:
             log.info('%s tried to fetch playerdata of %s', con.user.name, name)
             return None
-        pd = self.server.db.get_playerdata(name, form)
+        # A modified character variant is only ever served to a player who
+        # is alone on the server; the choice then sticks for the session so
+        # a later save can never overwrite the original.
+        with self.server.state.lock:
+            alone = len(self.server.state.activeUsers) == 1
+        use_modded = alone and \
+            self.server.db.has_modded_playerdata(name, form)
+        con.use_modded = use_modded
+        if use_modded:
+            log.info('Serving modified character to %s (solo session)', name)
+        pd = self.server.db.get_playerdata(name, form, modded=use_modded)
         return em(f'/getplayerdata "{name}" "{form}" {len(pd)}') + pd
 
     def _setplayerdata(self, con, res):
@@ -182,7 +192,9 @@ class CommandParser:
         pd = con.readBlob(_arg(res, 3, '0'))
         name = _arg(res, 1)
         if name == con.user.name:
-            self.server.db.set_playerdata(name, _arg(res, 2), pd)
+            self.server.db.set_playerdata(name, _arg(res, 2), pd,
+                                          modded=getattr(con, 'use_modded',
+                                                         False))
         else:
             log.info('%s tried to store playerdata of %s', con.user.name, name)
         return None
