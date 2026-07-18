@@ -1,7 +1,6 @@
-// Unused peer methods: reported as unsupported. Two Worlds does not
-// call these in the solo-host path (verified by capture).
+// Unused peer methods (unsupported). Real ones: the solo-host 10 plus
+// Connect + EnumHosts for two-player (Phase 3).
     STDMETHODIMP CancelAsyncOperation(DPNHANDLE hAsyncHandle, DWORD dwFlags) override { Log("Peer::CancelAsyncOperation (stub)"); return DPNERR_UNSUPPORTED; }
-    STDMETHODIMP Connect(const DPN_APPLICATION_DESC* pdnAppDesc, IDirectPlay8Address* pHostAddr, IDirectPlay8Address* pDeviceInfo, const DPN_SECURITY_DESC* pdnSecurity, const DPN_SECURITY_CREDENTIALS* pdnCredentials, const void* pvUserConnectData, DWORD dwUserConnectDataSize, void* pvPlayerContext, void* pvAsyncContext, DPNHANDLE* phAsyncHandle, DWORD dwFlags) override { Log("Peer::Connect (stub)"); return DPNERR_UNSUPPORTED; }
     STDMETHODIMP GetSendQueueInfo(DPNID dpnid, DWORD* pdwNumMsgs, DWORD* pdwNumBytes, DWORD dwFlags) override { Log("Peer::GetSendQueueInfo (stub)"); return DPNERR_UNSUPPORTED; }
     STDMETHODIMP GetApplicationDesc(DPN_APPLICATION_DESC* pAppDescBuffer, DWORD* pcbDataSize, DWORD dwFlags) override { Log("Peer::GetApplicationDesc (stub)"); return DPNERR_UNSUPPORTED; }
     STDMETHODIMP SetApplicationDesc(const DPN_APPLICATION_DESC* pad, DWORD dwFlags) override { Log("Peer::SetApplicationDesc (stub)"); return DPNERR_UNSUPPORTED; }
@@ -14,7 +13,6 @@
     STDMETHODIMP EnumPlayersAndGroups(DPNID* prgdpnid, DWORD* pcdpnid, DWORD dwFlags) override { Log("Peer::EnumPlayersAndGroups (stub)"); return DPNERR_UNSUPPORTED; }
     STDMETHODIMP EnumGroupMembers(DPNID dpnid, DPNID* prgdpnid, DWORD* pcdpnid, DWORD dwFlags) override { Log("Peer::EnumGroupMembers (stub)"); return DPNERR_UNSUPPORTED; }
     STDMETHODIMP GetPeerAddress(DPNID dpnid, IDirectPlay8Address** pAddress, DWORD dwFlags) override { Log("Peer::GetPeerAddress (stub)"); return DPNERR_UNSUPPORTED; }
-    STDMETHODIMP EnumHosts(PDPN_APPLICATION_DESC pApplicationDesc, IDirectPlay8Address* pAddrHost, IDirectPlay8Address* pDeviceInfo,PVOID pUserEnumData, DWORD dwUserEnumDataSize, DWORD dwEnumCount, DWORD dwRetryInterval, DWORD dwTimeOut,PVOID pvUserContext, DPNHANDLE* pAsyncHandle, DWORD dwFlags) override { Log("Peer::EnumHosts (stub)"); return DPNERR_UNSUPPORTED; }
     STDMETHODIMP DestroyPeer(DPNID dpnidClient, const void* pvDestroyData, DWORD dwDestroyDataSize, DWORD dwFlags) override { Log("Peer::DestroyPeer (stub)"); return DPNERR_UNSUPPORTED; }
     STDMETHODIMP GetPlayerContext(DPNID dpnid,PVOID* ppvPlayerContext, DWORD dwFlags) override { Log("Peer::GetPlayerContext (stub)"); return DPNERR_UNSUPPORTED; }
     STDMETHODIMP GetGroupContext(DPNID dpnid,PVOID* ppvGroupContext, DWORD dwFlags) override { Log("Peer::GetGroupContext (stub)"); return DPNERR_UNSUPPORTED; }

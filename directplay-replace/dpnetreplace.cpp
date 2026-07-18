@@ -6,20 +6,22 @@
 // per-user under WOW6432Node (admin-free), it is loaded by the 32-bit game
 // via CoCreateInstance.
 //
-// Phase 1 scope (verified against a captured real session): the solo-host
-// path. The game hosts a session, gets its local player, and exchanges
-// gameplay messages. In a solo session those messages loop back to the
-// local player, so this build delivers every SendTo back as a RECEIVE and
-// completes it - no real socket yet. That is enough for a single player to
-// start and play a map through our DLL. Real UDP transport and a second
-// peer (Connect/EnumHosts) come in a later phase.
+// Phase 3: real two-player UDP transport. The host binds a UDP socket and
+// advertises its actual LAN address; a joiner parses that address and
+// connects over UDP. The two replacement DLLs speak a tiny handshake
+// (CONNECT/ACK) to agree on player ids, then relay every SendTo to the
+// peer and deliver incoming packets as RECEIVE. Solo hosting still works
+// via loopback (a lone host has no peer, so its sends loop back as before).
 //
-// Only the 10 methods the game actually calls are implemented; the rest
-// report DPNERR_UNSUPPORTED. Messages delivered: CREATE_PLAYER,
-// DESTROY_PLAYER, RECEIVE, SEND_COMPLETE.
+// The 12 methods the game calls are implemented (the solo-host 10 plus
+// Connect + EnumHosts); the rest report DPNERR_UNSUPPORTED. Messages
+// delivered: CREATE_PLAYER, DESTROY_PLAYER, RECEIVE, SEND_COMPLETE,
+// CONNECT_COMPLETE, INDICATE_CONNECT.
 
 #define WIN32_LEAN_AND_MEAN
 #define INITGUID
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <dplay8.h>
 #include <dpaddr.h>
@@ -28,6 +30,15 @@
 #include <map>
 #include <deque>
 #include <string>
+
+#pragma comment(lib, "ws2_32.lib")
+
+// Wire packets exchanged between two dpnetreplace instances.
+#pragma pack(push, 1)
+struct WirePkt { DWORD magic; BYTE type; };  // magic 'TWDP'
+#pragma pack(pop)
+static const DWORD WIRE_MAGIC = 0x50445754;  // 'TWDP' little-endian
+enum { PKT_CONNECT = 1, PKT_ACK = 2, PKT_DATA = 3, PKT_BYE = 4 };
 
 static CRITICAL_SECTION g_logLock;
 static bool g_logReady = false;
@@ -264,9 +275,10 @@ class ReplPeer : public IDirectPlay8Peer {
 public:
     ReplPeer() : m_ref(1) { InterlockedIncrement(&g_objects); InitializeCriticalSection(&m_lock); }
     ~ReplPeer() {
-        // Always join the worker before tearing down the state it touches,
+        // Always tear down the threads before freeing the state they touch,
         // even if the game Released without calling Close() (abort paths).
-        // StopWorker() is idempotent, so a prior Close() makes this a no-op.
+        // StopNet()/StopWorker() are idempotent, so a prior Close() is a no-op.
+        StopNet();
         StopWorker();
         for (auto& kv : m_kept) free(kv.second);
         m_kept.clear();
@@ -340,9 +352,15 @@ public:
                       void* pvPlayerContext, DWORD) override {
         m_playerContext = pvPlayerContext;
         m_hosting = true;
-        Log("Peer::Host -> local player %lu", LOCAL_PLAYER);
+        m_isHost = true;
+        m_localDpnid = 1;
+        // Bind a UDP socket on an ephemeral port; we advertise the actual
+        // bound port via GetLocalHostAddresses so a joiner reaches us.
+        OpenSocket(0);
+        StartNet();
+        Log("Peer::Host -> local player 1, udp port %u", m_boundPort);
         // The local player is created asynchronously on the worker thread.
-        Job j; j.type = Job::CREATE_PLAYER;
+        Job j; j.type = Job::CREATE_PLAYER; j.dpnid = 1;
         Enqueue(j);
         return S_OK;
     }
@@ -371,22 +389,20 @@ public:
         if (!prgpAddress || *pcAddress < 1) { *pcAddress = 1; return DPNERR_BUFFERTOOSMALL; }
         ReplAddress* a = new ReplAddress();
         a->SetSP(&CLSID_DP8SP_TCPIP);
-        DWORD host = 0; const wchar_t* hn = L"127.0.0.1";
-        a->AddComponent(DPNA_KEY_HOSTNAME, hn, (DWORD)(wcslen(hn) + 1) * sizeof(WCHAR), DPNA_DATATYPE_STRING);
-        DWORD port = 57033;
+        std::wstring ip = BestLanIpW();
+        a->AddComponent(DPNA_KEY_HOSTNAME, ip.c_str(),
+                        (DWORD)(ip.size() + 1) * sizeof(WCHAR), DPNA_DATATYPE_STRING);
+        DWORD port = m_boundPort;
         a->AddComponent(DPNA_KEY_PORT, &port, sizeof(port), DPNA_DATATYPE_DWORD);
-        (void)host;
         prgpAddress[0] = a;
         *pcAddress = 1;
-        Log("Peer::GetLocalHostAddresses");
+        Log("Peer::GetLocalHostAddresses -> %S:%u", ip.c_str(), m_boundPort);
         return S_OK;
     }
 
-    STDMETHODIMP SendTo(DPNID, const DPN_BUFFER_DESC* prgBufferDesc, DWORD cBufferDesc,
+    STDMETHODIMP SendTo(DPNID dpnid, const DPN_BUFFER_DESC* prgBufferDesc, DWORD cBufferDesc,
                         DWORD, void* pvAsyncContext, DPNHANDLE* phAsyncHandle,
                         DWORD dwFlags) override {
-        // Concatenate the buffers and loop them back to the local player as
-        // a RECEIVE. If async, complete the send with SEND_COMPLETE first.
         std::vector<BYTE> data;
         for (DWORD i = 0; i < cBufferDesc; ++i)
             data.insert(data.end(), prgBufferDesc[i].pBufferData,
@@ -396,11 +412,19 @@ public:
         DPNHANDLE h = 0;
         if (async) { h = NextHandle(); if (phAsyncHandle) *phAsyncHandle = h; }
 
+        // If a peer is connected and the target is the peer or the whole
+        // session, ship the payload over UDP; it arrives there as RECEIVE.
+        bool toPeer = m_hasPeer &&
+                      (dpnid == m_remoteDpnid || dpnid == DPNID_ALL_PLAYERS_GROUP);
+        if (toPeer) SendWire(PKT_DATA, m_localDpnid, data.data(), (DWORD)data.size());
+
         if (async) {
             Job sc; sc.type = Job::SEND_COMPLETE; sc.handle = h; sc.context = pvAsyncContext;
             Enqueue(sc);
         }
-        Job rc; rc.type = Job::RECEIVE; rc.data.swap(data);
+        // Loopback to self, preserving the solo behaviour the game relies on
+        // (sender id = our own player, which the game recognises as itself).
+        Job rc; rc.type = Job::RECEIVE; rc.dpnid = m_localDpnid; rc.data.swap(data);
         Enqueue(rc);
         return async ? DPNSUCCESS_PENDING : S_OK;
     }
@@ -415,7 +439,10 @@ public:
 
     STDMETHODIMP Close(DWORD) override {
         Log("Peer::Close");
-        if (m_hosting) { Job j; j.type = Job::DESTROY_PLAYER; Enqueue(j); m_hosting = false; }
+        if (m_hasPeer) SendWire(PKT_BYE, m_localDpnid, NULL, 0);
+        StopNet();
+        if (m_localDpnid) { Job j; j.type = Job::DESTROY_PLAYER; j.dpnid = m_localDpnid; Enqueue(j); }
+        m_hosting = false;
         StopWorker();
         // free any buffers the game never returned
         EnterCriticalSection(&m_lock);
@@ -425,14 +452,53 @@ public:
         return S_OK;
     }
 
+    STDMETHODIMP Connect(const DPN_APPLICATION_DESC*, IDirectPlay8Address* pHostAddr,
+                         IDirectPlay8Address*, const DPN_SECURITY_DESC*,
+                         const DPN_SECURITY_CREDENTIALS*, const void*, DWORD,
+                         void* pvPlayerContext, void* pvAsyncContext,
+                         DPNHANDLE* phAsyncHandle, DWORD) override {
+        m_playerContext = pvPlayerContext;
+        m_isHost = false;
+        std::string host; unsigned short port = 0;
+        if (!ParseHostAddr(pHostAddr, host, port)) {
+            Log("Peer::Connect -> could not parse host address");
+            return DPNERR_INVALIDHOSTADDRESS;
+        }
+        OpenSocket(0);  // ephemeral local port
+        m_peerAddr = {};
+        m_peerAddr.sin_family = AF_INET;
+        m_peerAddr.sin_port = htons(port);
+        inet_pton(AF_INET, host.c_str(), &m_peerAddr.sin_addr);
+        DPNHANDLE h = NextHandle();
+        m_connectHandle = h; m_connectContext = pvAsyncContext;
+        if (phAsyncHandle) *phAsyncHandle = h;
+        StartNet();
+        SendWire(PKT_CONNECT, 0, NULL, 0);   // knock on the host
+        Log("Peer::Connect -> %s:%u", host.c_str(), port);
+        return DPNSUCCESS_PENDING;
+    }
+
+    STDMETHODIMP EnumHosts(PDPN_APPLICATION_DESC, IDirectPlay8Address*, IDirectPlay8Address*,
+                           PVOID, DWORD, DWORD, DWORD, DWORD, PVOID,
+                           DPNHANDLE* pAsyncHandle, DWORD) override {
+        // Two Worlds gets the exact host address from the lobby and connects
+        // directly, so enumeration is a no-op that just reports pending.
+        Log("Peer::EnumHosts (no-op)");
+        if (pAsyncHandle) *pAsyncHandle = NextHandle();
+        return DPNSUCCESS_PENDING;
+    }
+
 #include "peer_stubs.inc"
 
 private:
     struct Job {
-        enum Type { CREATE_PLAYER, DESTROY_PLAYER, RECEIVE, SEND_COMPLETE } type;
+        enum Type { CREATE_PLAYER, DESTROY_PLAYER, RECEIVE, SEND_COMPLETE,
+                    CONNECT_COMPLETE, INDICATE_CONNECT } type;
+        DPNID dpnid = 0;          // player id (CREATE/DESTROY) or sender (RECEIVE)
         std::vector<BYTE> data;   // RECEIVE payload
-        DPNHANDLE handle = 0;     // SEND_COMPLETE async handle
-        void* context = NULL;     // SEND_COMPLETE user context
+        DPNHANDLE handle = 0;     // SEND_COMPLETE / CONNECT async handle
+        void* context = NULL;     // async user context
+        HRESULT result = S_OK;    // CONNECT_COMPLETE result
     };
 
     void StartWorker() {
@@ -459,6 +525,134 @@ private:
     }
     DPNHANDLE NextHandle() { return (DPNHANDLE)InterlockedIncrement(&m_nextHandle); }
 
+    // -- networking (Phase 3) -----------------------------------------
+
+    void OpenSocket(unsigned short port) {
+        m_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (m_sock == INVALID_SOCKET) { Log("socket() failed %d", WSAGetLastError()); return; }
+        sockaddr_in a{}; a.sin_family = AF_INET; a.sin_addr.s_addr = INADDR_ANY;
+        a.sin_port = htons(port);
+        if (bind(m_sock, (sockaddr*)&a, sizeof(a)) != 0)
+            Log("bind() failed %d", WSAGetLastError());
+        sockaddr_in bound{}; int bl = sizeof(bound);
+        if (getsockname(m_sock, (sockaddr*)&bound, &bl) == 0)
+            m_boundPort = ntohs(bound.sin_port);
+        // short recv timeout so the net loop can check the stop flag
+        DWORD tmo = 200; setsockopt(m_sock, SOL_SOCKET, SO_RCVTIMEO, (char*)&tmo, sizeof(tmo));
+    }
+
+    void SendWire(BYTE type, DPNID sender, const void* payload, DWORD len) {
+        if (m_sock == INVALID_SOCKET || !m_hasPeer && type == PKT_DATA) return;
+        std::vector<BYTE> pkt(sizeof(WirePkt) + sizeof(DPNID) + len);
+        WirePkt* h = (WirePkt*)pkt.data(); h->magic = WIRE_MAGIC; h->type = type;
+        memcpy(pkt.data() + sizeof(WirePkt), &sender, sizeof(DPNID));
+        if (len) memcpy(pkt.data() + sizeof(WirePkt) + sizeof(DPNID), payload, len);
+        sendto(m_sock, (char*)pkt.data(), (int)pkt.size(), 0,
+               (sockaddr*)&m_peerAddr, sizeof(m_peerAddr));
+    }
+
+    void StartNet() {
+        m_netStop = false;
+        m_netThread = CreateThread(NULL, 0, &ReplPeer::NetEntry, this, 0, NULL);
+    }
+    void StopNet() {
+        if (m_netThread) {
+            m_netStop = true;
+            WaitForSingleObject(m_netThread, INFINITE);
+            CloseHandle(m_netThread); m_netThread = NULL;
+        }
+        if (m_sock != INVALID_SOCKET) { closesocket(m_sock); m_sock = INVALID_SOCKET; }
+    }
+    static DWORD WINAPI NetEntry(LPVOID p) { ((ReplPeer*)p)->NetLoop(); return 0; }
+
+    void NetLoop() {
+        std::vector<BYTE> buf(65536);
+        while (!m_netStop) {
+            sockaddr_in from{}; int fl = sizeof(from);
+            int n = recvfrom(m_sock, (char*)buf.data(), (int)buf.size(), 0,
+                             (sockaddr*)&from, &fl);
+            if (n < (int)(sizeof(WirePkt) + sizeof(DPNID))) continue;
+            WirePkt* h = (WirePkt*)buf.data();
+            if (h->magic != WIRE_MAGIC) continue;
+            DPNID sender; memcpy(&sender, buf.data() + sizeof(WirePkt), sizeof(DPNID));
+            BYTE* body = buf.data() + sizeof(WirePkt) + sizeof(DPNID);
+            DWORD bodyLen = n - sizeof(WirePkt) - sizeof(DPNID);
+            HandlePacket(h->type, sender, body, bodyLen, from);
+        }
+    }
+
+    void HandlePacket(BYTE type, DPNID sender, BYTE* body, DWORD len, sockaddr_in& from) {
+        switch (type) {
+        case PKT_CONNECT: {          // host side: a joiner knocked
+            if (!m_isHost || m_hasPeer) break;
+            m_peerAddr = from;
+            m_remoteDpnid = 2;
+            m_hasPeer = true;
+            Log("net: joiner connected, dpnid 2");
+            SendWire(PKT_ACK, m_localDpnid, NULL, 0);   // reply carries no body; ids implied
+            Job ic; ic.type = Job::INDICATE_CONNECT; Enqueue(ic);
+            Job cp; cp.type = Job::CREATE_PLAYER; cp.dpnid = 2; Enqueue(cp);
+            break;
+        }
+        case PKT_ACK: {              // joiner side: host accepted
+            if (m_isHost || m_hasPeer) break;
+            m_localDpnid = 2; m_remoteDpnid = 1; m_hasPeer = true;
+            Log("net: host accepted, local dpnid 2, host dpnid 1");
+            Job cc; cc.type = Job::CONNECT_COMPLETE; cc.handle = m_connectHandle;
+            cc.context = m_connectContext; cc.result = S_OK; Enqueue(cc);
+            Job hp; hp.type = Job::CREATE_PLAYER; hp.dpnid = 1; Enqueue(hp);  // host
+            Job sp; sp.type = Job::CREATE_PLAYER; sp.dpnid = 2; Enqueue(sp);  // self
+            break;
+        }
+        case PKT_DATA: {
+            Job rc; rc.type = Job::RECEIVE; rc.dpnid = sender;
+            rc.data.assign(body, body + len); Enqueue(rc);
+            break;
+        }
+        case PKT_BYE: {
+            if (m_hasPeer) {
+                Job dp; dp.type = Job::DESTROY_PLAYER; dp.dpnid = m_remoteDpnid; Enqueue(dp);
+                m_hasPeer = false;
+            }
+            break;
+        }
+        }
+    }
+
+    static bool ParseHostAddr(IDirectPlay8Address* a, std::string& host, unsigned short& port) {
+        if (!a) return false;
+        WCHAR name[256]; DWORD sz = sizeof(name); DWORD type = 0;
+        if (a->GetComponentByName(DPNA_KEY_HOSTNAME, name, &sz, &type) != S_OK) return false;
+        char h[256]; WideCharToMultiByte(CP_ACP, 0, name, -1, h, sizeof(h), NULL, NULL);
+        host = h;
+        DWORD p = 0; sz = sizeof(p); type = 0;
+        if (a->GetComponentByName(DPNA_KEY_PORT, &p, &sz, &type) == S_OK) port = (unsigned short)p;
+        return !host.empty() && port != 0;
+    }
+
+    static std::wstring BestLanIpW() {
+        // Prefer a private-range IPv4 the local host resolves to.
+        std::wstring best = L"127.0.0.1";
+        char hn[256];
+        if (gethostname(hn, sizeof(hn)) != 0) return best;
+        addrinfo hints{}; hints.ai_family = AF_INET; addrinfo* res = NULL;
+        if (getaddrinfo(hn, NULL, &hints, &res) != 0) return best;
+        for (addrinfo* p = res; p; p = p->ai_next) {
+            sockaddr_in* s = (sockaddr_in*)p->ai_addr;
+            DWORD ip = ntohl(s->sin_addr.s_addr);
+            BYTE b1 = (ip >> 24) & 0xFF, b2 = (ip >> 16) & 0xFF;
+            bool priv = (b1 == 192 && b2 == 168) || (b1 == 10) ||
+                        (b1 == 172 && b2 >= 16 && b2 <= 31);
+            if (priv) {
+                char buf[64]; inet_ntop(AF_INET, &s->sin_addr, buf, sizeof(buf));
+                WCHAR w[64]; MultiByteToWideChar(CP_ACP, 0, buf, -1, w, 64);
+                best = w; break;
+            }
+        }
+        freeaddrinfo(res);
+        return best;
+    }
+
     static DWORD WINAPI ThreadEntry(LPVOID p) { ((ReplPeer*)p)->WorkerLoop(); return 0; }
 
     void WorkerLoop() {
@@ -479,17 +673,33 @@ private:
     void Dispatch(Job& j) {
         if (!m_handler) return;
         switch (j.type) {
+        case Job::INDICATE_CONNECT: {
+            // Host is asked to accept an incoming connection. Returning
+            // S_OK from the handler accepts it.
+            DPNMSG_INDICATE_CONNECT m{}; m.dwSize = sizeof(m);
+            m_handler(m_context, DPN_MSGID_INDICATE_CONNECT, &m);
+            break;
+        }
         case Job::CREATE_PLAYER: {
             DPNMSG_CREATE_PLAYER m{}; m.dwSize = sizeof(m);
-            m.dpnidPlayer = LOCAL_PLAYER; m.pvPlayerContext = m_playerContext;
+            m.dpnidPlayer = j.dpnid;
+            m.pvPlayerContext = (j.dpnid == m_localDpnid) ? m_playerContext : NULL;
             m_handler(m_context, DPN_MSGID_CREATE_PLAYER, &m);
             break;
         }
         case Job::DESTROY_PLAYER: {
             DPNMSG_DESTROY_PLAYER m{}; m.dwSize = sizeof(m);
-            m.dpnidPlayer = LOCAL_PLAYER; m.pvPlayerContext = m_playerContext;
+            m.dpnidPlayer = j.dpnid;
+            m.pvPlayerContext = (j.dpnid == m_localDpnid) ? m_playerContext : NULL;
             m.dwReason = DPNDESTROYPLAYERREASON_NORMAL;
             m_handler(m_context, DPN_MSGID_DESTROY_PLAYER, &m);
+            break;
+        }
+        case Job::CONNECT_COMPLETE: {
+            DPNMSG_CONNECT_COMPLETE m{}; m.dwSize = sizeof(m);
+            m.hAsyncOp = j.handle; m.pvUserContext = j.context;
+            m.hResultCode = j.result; m.dpnidLocal = m_localDpnid;
+            m_handler(m_context, DPN_MSGID_CONNECT_COMPLETE, &m);
             break;
         }
         case Job::SEND_COMPLETE: {
@@ -505,7 +715,8 @@ private:
             if (size) memcpy(buf, j.data.data(), size);
             DPNHANDLE h = NextHandle();
             DPNMSG_RECEIVE m{}; m.dwSize = sizeof(m);
-            m.dpnidSender = LOCAL_PLAYER; m.pvPlayerContext = m_playerContext;
+            m.dpnidSender = j.dpnid ? j.dpnid : m_localDpnid;
+            m.pvPlayerContext = NULL;
             m.pReceiveData = buf; m.dwReceiveDataSize = size; m.hBufferHandle = h;
             HRESULT hr = m_handler(m_context, DPN_MSGID_RECEIVE, &m);
             if (hr == DPNSUCCESS_PENDING) {
@@ -534,6 +745,19 @@ private:
     HANDLE m_wake = NULL;
     volatile bool m_stop = false;
     volatile LONG m_nextHandle = 1000;
+
+    // networking (Phase 3)
+    SOCKET m_sock = INVALID_SOCKET;
+    HANDLE m_netThread = NULL;
+    volatile bool m_netStop = false;
+    bool m_isHost = false;
+    DPNID m_localDpnid = 0;
+    DPNID m_remoteDpnid = 0;
+    bool m_hasPeer = false;
+    sockaddr_in m_peerAddr{};
+    DPNHANDLE m_connectHandle = 0;
+    void* m_connectContext = NULL;
+    unsigned short m_boundPort = 0;
 };
 
 // ===================================================================
@@ -588,6 +812,7 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(inst);
         LogInit();
+        WSADATA wsa; WSAStartup(MAKEWORD(2, 2), &wsa);
         Log("=== dpnetreplace geladen (pid %lu) ===", GetCurrentProcessId());
     }
     return TRUE;

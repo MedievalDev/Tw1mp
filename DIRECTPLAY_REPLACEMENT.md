@@ -292,6 +292,18 @@ mehr an der kaputten Windows-dpnet.
   aufgerufen). 2-Maschinen-LAN-Test.
 - **Phase 4:** optionaler eigener NAT-Resolver → Internet-MP ohne VPN.
 
-Stand: 2026-07-18. Scoping + Feasibility + Ladepfad + Phase 0
+## Phase 3 - UDP-Transport gebaut + selbst-verifiziert (2026-07-19)
+
+Die Replacement-DLL kann jetzt zwei Peers ueber echtes UDP verbinden:
+`Connect`/`EnumHosts` implementiert, Host bindet einen UDP-Socket und
+bewirbt die KORREKTE LAN-IP (kein Phantom mehr), die beiden DLLs handshaken
+(CONNECT/ACK), vergeben Spieler-IDs (Host=1, Joiner=2) und relayen
+SendTo<->RECEIVE ueber UDP. Ein Selbsttest-Harness (test_p2p.cpp, zwei
+Instanzen in einem Prozess) bestaetigt Handshake, beidseitige Spieler-
+erzeugung und Nachrichtenaustausch OHNE das Spiel - Ergebnis PASS.
+Naechster Schritt: 2-Maschinen-Test mit dem echten Client (beide Rechner
+registrieren die Replacement-DLL).
+
+Stand: 2026-07-19. Scoping + Feasibility + Ladepfad + Phase 0
 (Ground-Truth) + **Phase 1 (Solo-Host-Replacement, live verifiziert)**
 abgeschlossen.

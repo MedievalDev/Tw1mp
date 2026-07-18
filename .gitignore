@@ -13,3 +13,4 @@ directplay_fix_log.txt
 *.obj
 *.exp
 *.lib
+*.exe
