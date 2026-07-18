@@ -1,0 +1,4 @@
+LIBRARY dpnetreplace
+EXPORTS
+    DllGetClassObject   PRIVATE
+    DllCanUnloadNow     PRIVATE

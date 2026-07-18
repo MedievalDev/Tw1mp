@@ -79,6 +79,37 @@ static const char* MsgName(DWORD id)
     }
 }
 
+// -- transparent address wrapper --------------------------------------
+
+class AddrShim : public IDirectPlay8Address {
+public:
+    explicit AddrShim(IDirectPlay8Address* real) : m_ref(1), m_real(real) {}
+
+    STDMETHODIMP QueryInterface(REFIID riid, void** ppv) override {
+        if (IsEqualIID(riid, IID_IUnknown) ||
+            IsEqualIID(riid, IID_IDirectPlay8Address)) {
+            *ppv = static_cast<IDirectPlay8Address*>(this); AddRef(); return S_OK;
+        }
+        return m_real->QueryInterface(riid, ppv);
+    }
+    STDMETHODIMP_(ULONG) AddRef() override { return InterlockedIncrement(&m_ref); }
+    STDMETHODIMP_(ULONG) Release() override {
+        LONG r = InterlockedDecrement(&m_ref);
+        if (r == 0) { m_real->Release(); delete this; }
+        return r;
+    }
+
+#include "addr_forwarders.inc"
+
+private:
+    LONG m_ref;
+    IDirectPlay8Address* m_real;
+};
+
+static IDirectPlay8Address* WrapAddr(IDirectPlay8Address* a) {
+    return a ? new AddrShim(a) : a;
+}
+
 // -- transparent peer wrapper -----------------------------------------
 
 class PeerShim : public IDirectPlay8Peer {
@@ -123,6 +154,25 @@ public:
         return hr;
     }
 
+    // Hand-written to wrap the addresses handed back to the game, so its
+    // calls on them (GetURLW, GetComponentByName, ...) are captured too.
+    STDMETHODIMP GetLocalHostAddresses(IDirectPlay8Address** prgpAddress,
+                                       DWORD* pcAddress, DWORD dwFlags) override {
+        Log("CALL Peer::GetLocalHostAddresses");
+        HRESULT hr = m_real->GetLocalHostAddresses(prgpAddress, pcAddress, dwFlags);
+        if (SUCCEEDED(hr) && prgpAddress && pcAddress)
+            for (DWORD i = 0; i < *pcAddress; ++i)
+                prgpAddress[i] = WrapAddr(prgpAddress[i]);
+        return hr;
+    }
+    STDMETHODIMP GetPeerAddress(DPNID dpnid, IDirectPlay8Address** pAddress,
+                                DWORD dwFlags) override {
+        Log("CALL Peer::GetPeerAddress");
+        HRESULT hr = m_real->GetPeerAddress(dpnid, pAddress, dwFlags);
+        if (SUCCEEDED(hr) && pAddress) *pAddress = WrapAddr(*pAddress);
+        return hr;
+    }
+
 #include "peer_forwarders.inc"
 
 private:
@@ -155,10 +205,14 @@ public:
     STDMETHODIMP CreateInstance(IUnknown* outer, REFIID riid, void** ppv) override {
         Log("CreateInstance riid={%08lX-...}", ((const GUID&)riid).Data1);
         HRESULT hr = m_real->CreateInstance(outer, riid, ppv);
-        if (SUCCEEDED(hr) && ppv && *ppv &&
-            IsEqualIID(riid, IID_IDirectPlay8Peer)) {
-            *ppv = new PeerShim((IDirectPlay8Peer*)*ppv);
-            Log("  wrapped DirectPlay8Peer");
+        if (SUCCEEDED(hr) && ppv && *ppv) {
+            if (IsEqualIID(riid, IID_IDirectPlay8Peer)) {
+                *ppv = new PeerShim((IDirectPlay8Peer*)*ppv);
+                Log("  wrapped DirectPlay8Peer");
+            } else if (IsEqualIID(riid, IID_IDirectPlay8Address)) {
+                *ppv = WrapAddr((IDirectPlay8Address*)*ppv);
+                Log("  wrapped DirectPlay8Address");
+            }
         }
         return hr;
     }
@@ -192,11 +246,12 @@ STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID* ppv)
 
     HRESULT hr = real(rclsid, riid, ppv);
     if (SUCCEEDED(hr) && IsEqualIID(riid, IID_IClassFactory) && ppv && *ppv) {
-        // Only wrap the Peer factory; other classes pass through untouched.
-        if (IsEqualGUID(rclsid, CLSID_DirectPlay8Peer)) {
+        // Wrap the Peer and Address factories; other classes pass through.
+        if (IsEqualGUID(rclsid, CLSID_DirectPlay8Peer) ||
+            IsEqualGUID(rclsid, CLSID_DirectPlay8Address)) {
             *ppv = new ShimFactory((IClassFactory*)*ppv);
             InterlockedIncrement(&g_factoryRefs);
-            Log("  wrapped Peer class factory");
+            Log("  wrapped class factory");
         }
     }
     return hr;

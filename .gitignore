@@ -15,3 +15,4 @@ directplay_fix_log.txt
 *.dll
 # LGPL DirectPlay8 headers - fetched, not committed (see fetch-headers.sh)
 directplay-shim/include/
+directplay-replace/include/

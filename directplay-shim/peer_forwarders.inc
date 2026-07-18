@@ -1,5 +1,6 @@
-// Generated transparent forwarders for IDirectPlay8Peer (all methods
-// except Initialize, which wraps the message handler in the class).
+// Generated transparent forwarders for IDirectPlay8Peer. Initialize,
+// GetLocalHostAddresses and GetPeerAddress are hand-written in the
+// class (message-handler / address wrapping).
     STDMETHODIMP EnumServiceProviders(const GUID* pguidServiceProvider, const GUID* pguidApplication, DPN_SERVICE_PROVIDER_INFO* pSPInfoBuffer, DWORD* pcbEnumData, DWORD* pcReturned, DWORD dwFlags) override {
         Log("CALL Peer::EnumServiceProviders");
         return m_real->EnumServiceProviders(pguidServiceProvider, pguidApplication, pSPInfoBuffer, pcbEnumData, pcReturned, dwFlags);
@@ -71,14 +72,6 @@
     STDMETHODIMP GetPeerInfo(DPNID dpnid, DPN_PLAYER_INFO* pdpnPlayerInfo, DWORD* pdwSize, DWORD dwFlags) override {
         Log("CALL Peer::GetPeerInfo");
         return m_real->GetPeerInfo(dpnid, pdpnPlayerInfo, pdwSize, dwFlags);
-    }
-    STDMETHODIMP GetPeerAddress(DPNID dpnid, IDirectPlay8Address** pAddress, DWORD dwFlags) override {
-        Log("CALL Peer::GetPeerAddress");
-        return m_real->GetPeerAddress(dpnid, pAddress, dwFlags);
-    }
-    STDMETHODIMP GetLocalHostAddresses(IDirectPlay8Address** prgpAddress, DWORD* pcAddress, DWORD dwFlags) override {
-        Log("CALL Peer::GetLocalHostAddresses");
-        return m_real->GetLocalHostAddresses(prgpAddress, pcAddress, dwFlags);
     }
     STDMETHODIMP Close(DWORD dwFlags) override {
         Log("CALL Peer::Close");

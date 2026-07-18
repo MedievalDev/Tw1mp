@@ -226,6 +226,45 @@ kommt als RECEIVE zurück) — noch OHNE echtes Netzwerk. Ziel: ein
 Das ist der erste Meilenstein, den ich allein verifizieren kann. Danach
 Phasen 3/4 (echtes UDP + 2. Client) mit zweitem Test-Rechner.
 
-Stand: 2026-07-18. Scoping + Feasibility + Ladepfad + **Phase 0
-(Ground-Truth-Capture) abgeschlossen und verifiziert**. Nächster Schritt:
-Phase-1-Solo-Host-Replacement.
+## Phase 1 ABGESCHLOSSEN — Solo-Host-Replacement läuft (verifiziert)
+
+`directplay-replace/dpnetreplace.cpp` ist eine echte DirectPlay8-Ersatz-DLL
+(kein Shim): eigene Implementierungen von `IDirectPlay8Peer` (die 10
+genutzten Methoden + 24 `DPNERR_UNSUPPORTED`-Stubs) und
+`IDirectPlay8Address` (SP/Komponenten/URL-Bau), mit Loopback-Message-
+Dispatch auf einem Worker-Thread. Registrierung admin-frei per-user unter
+`WOW6432Node` (`register.ps1`).
+
+**Live gegen den echten Client verifiziert (2026-07-18):** Mit registriertem
+Replacement (stock dpnet komplett umgangen) durchlief das Spiel die gesamte
+Host-Setup-Sequenz über unseren Code — `Initialize`, `EnumServiceProviders`
+(beide Calls), `Address::SetSP`/`AddComponent`, `GetSPCaps`,
+`SetPeerInfo(marco19942)`, `Host → local player 1`,
+`GetLocalHostAddresses`, `GetPeerInfo` — und lud eine spielbare
+Multiplayer-Map. Charakter live und beweglich, Quest aktiv, **kein Crash**
+(letzter WER-Crash lag vor dem Test). Der komplette DirectPlay-Aufbau läuft
+damit ohne Windows-Legacy-dpnet.
+
+Vor dem Live-Test lief eine adversariale Multi-Agent-Review; der einzige
+reale Befund (Worker-Thread-Lebensdauer: Use-after-free bei
+Release-ohne-Close und beim 2s-Join-Timeout) wurde behoben (Destruktor
+stoppt den Worker, Join unbegrenzt).
+
+Nicht ausgelöst in diesem Solo-Map-Lauf: der SendTo→RECEIVE-Loopback — in
+einer Solo-Spielmap ohne weitere Peers sendet der Client nichts (korrektes
+Verhalten). Der Pfad ist implementiert und reviewt; die Stadt-
+Positions-Broadcasts bzw. der 2-Spieler-Fall werden ihn ausüben.
+
+## Offene Phasen
+
+- **Phase 2:** SendTo→RECEIVE-Loopback in der Stadt ausüben (Positions-
+  Broadcasts), um den Gameplay-Nachrichtenpfad end-to-end zu bestätigen.
+- **Phase 3:** echtes UDP-Transport statt Loopback (WinSock2), damit ein
+  zweiter Client beitreten kann — braucht zusätzlich `Connect`, `EnumHosts`
+  und die Nachrichten INDICATE_CONNECT/CONNECT_COMPLETE (im Solo-Fall nie
+  aufgerufen). 2-Maschinen-LAN-Test.
+- **Phase 4:** optionaler eigener NAT-Resolver → Internet-MP ohne VPN.
+
+Stand: 2026-07-18. Scoping + Feasibility + Ladepfad + Phase 0
+(Ground-Truth) + **Phase 1 (Solo-Host-Replacement, live verifiziert)**
+abgeschlossen.
