@@ -240,8 +240,10 @@ class TestGames(ServerFixture):
     def test_create_join_start(self):
         alice = self.connect('alice')
         bob = self.connect('bob')
+        carol = self.connect('carol')  # spectator stays in the channel
         self.join_channel(alice)
         self.join_channel(bob)
+        self.join_channel(carol)
         bob.drain(0.4)
         self.create_game(alice)
         got = bob.wait_for(b'$game')
@@ -250,10 +252,34 @@ class TestGames(ServerFixture):
         got = bob.wait_for(b'/joingame')
         self.assertIn(b'/joingame "MyGame" "x-directplay:/1.0/host/127.0.0.1"',
                       got)
-        alice.drain(0.4)
+        carol.drain(0.4)
         alice.send_cmd('/startinggame')
-        got = alice.wait_for(b'/gamestatus', timeout=3)
+        # spectators see the players and the game leave the lobby lists
+        got = carol.wait_for(b'/gamestatus', timeout=3)
         self.assertIn(b'/gamestatus "MyGame" "1"', got)
+        self.assertIn(b'/&gamechanneluser "alice"', got)
+        # the players themselves get no lobby messages about their own game
+        got = alice.drain(0.6) + bob.drain(0.6)
+        self.assertNotIn(b'/gamestatus', got)
+        self.assertNotIn(b'/&gamechanneluser', got)
+
+    def test_solo_host_cycle_sends_no_lobby_echo(self):
+        # Regression for the real-client crash: a solo host repeatedly
+        # creating, starting and stopping games must never receive game
+        # list messages about its own game (double removes and self-echoes
+        # crashed the 1.7 client after 2-3 cycles).
+        alice = self.connect('alice')
+        self.join_channel(alice)
+        alice.drain(0.4)
+        for i in range(3):
+            self.create_game(alice, name=f'Game{i}', npj='0')
+            alice.send_cmd('/startinggame')
+            alice.send_cmd('/stopgame')
+            got = alice.drain(0.5)
+            for token in (b'game', b'chatchanneluser', b'gamechanneluser'):
+                self.assertNotIn(b'$' + token, got)
+                self.assertNotIn(b'&' + token, got)
+            self.assertNotIn(b'/gamestatus', got)
 
     def test_wrong_game_password(self):
         alice = self.connect('alice')

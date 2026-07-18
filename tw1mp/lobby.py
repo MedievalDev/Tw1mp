@@ -124,10 +124,14 @@ class GameEntry:
         self.userlist = [host]
         self.parent.games[self.gname] = self
         host.user.game = self
+        # Advertise to the rest of the channel only. The field-tested solo
+        # server never echoed game-list messages back at the acting client;
+        # doing so (as TW1CS did, untested) crashed the real client after a
+        # few create/stop cycles.
         msg = self.getGameString()
-        if msg:
-            self.parent.server.dist.add(
-                {'target': list(self.parent.userlist), 'message': msg})
+        tg = _without(self.parent.userlist, host)
+        if msg and tg:
+            self.parent.server.dist.add({'target': tg, 'message': msg})
 
     def addUser(self, con, pasw):
         # Full/already-running games are declined silently, matching the
@@ -143,26 +147,42 @@ class GameEntry:
         con.user.game = self
         joined = em(f'$gameuser "{self.gname}" "{con.user.name}" "" "100" "0"')
         if self.npj:
-            con.server.dist.add(
-                {'target': list(self.parent.userlist), 'message': joined})
+            tg = _without(self.parent.userlist, con)
+            if tg:
+                con.server.dist.add({'target': tg, 'message': joined})
         return em(f'/joingame "{self.gname}" "{self.url}" "{self.status}"')
 
     def remove(self, con):
-        tg = list(self.parent.userlist)
         if con in self.userlist:
             self.userlist.remove(con)
-        leavemsg = em(f'&gameuser "{con.user.name}"')
         con.user.game = None
+        # Only channel members outside this game get the removal; players
+        # of the game itself never receive lobby messages about it.
+        tg = [c for c in self.parent.userlist
+              if c is not con and c not in self.userlist]
         if len(self.userlist) == 0:
             leavemsg = em(f'&game "{self.gname}"')
             self.parent.games.pop(self.gname, None)
-        self.parent.server.dist.add({'target': tg, 'message': leavemsg})
+        else:
+            leavemsg = em(f'&gameuser "{con.user.name}"')
+        if self.status and not self.npj:
+            # A started closed game was already removed from everyone's
+            # lists via /&game at start; a second remove for the now
+            # nonexistent entry crashed the real client.
+            leavemsg = None
+        if leavemsg and tg:
+            self.parent.server.dist.add({'target': tg, 'message': leavemsg})
 
     def startGame(self, con=None):
         if not (con and self.host is con):
             return None  # only the host may start
-        tg = list(self.parent.userlist)
         self.status = 1
+        # The players entering the game get no lobby messages about it
+        # (matching the field-tested solo server); only spectators in the
+        # channel see the players and the game leave the lists.
+        tg = [c for c in self.parent.userlist if c not in self.userlist]
+        if not tg:
+            return None
         for c in self.userlist:
             un = c.user.name
             self.parent.server.dist.add({
@@ -315,17 +335,22 @@ class GameChannel:
     def updatePos(self, md):
         if not self.dirty:
             return
-        tg = list(self.userlist)
-        msgchunks = []
-        for ucon in tg:
-            if ucon.user.poschanged:
-                msgchunks.append(f'{ucon.user.idnum:x}#{ucon.user.posdata}')
-                ucon.user.poschanged = False
         self.dirty = False
-        # The reference server broadcasts '/updheropos ' even when no
-        # positions remain (e.g. the mover just left); keep byte parity.
-        msg = em('/updheropos ' + ' '.join(msgchunks))
-        md.add({'target': tg, 'message': msg})
+        movers = [u for u in self.userlist if u.user.poschanged]
+        for ucon in movers:
+            ucon.user.poschanged = False
+        if not movers:
+            return
+        # Each recipient only gets positions of OTHER users. The reference
+        # server echoed the mover's own position back (with a uid the
+        # client was never told about) — the field-tested solo server sent
+        # no position packets at all, so never echo at the mover.
+        for ucon in self.userlist:
+            chunks = [f'{m.user.idnum:x}#{m.user.posdata}'
+                      for m in movers if m is not ucon]
+            if chunks:
+                md.add({'target': (ucon,),
+                        'message': em('/updheropos ' + ' '.join(chunks))})
 
     def debug_arr_games(self):
         return [g.debug_dict() for g in self.games.values()]
