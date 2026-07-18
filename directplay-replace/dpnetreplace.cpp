@@ -43,17 +43,26 @@ enum { PKT_CONNECT = 1, PKT_ACK = 2, PKT_DATA = 3, PKT_BYE = 4 };
 static CRITICAL_SECTION g_logLock;
 static bool g_logReady = false;
 static LONG g_objects = 0;
-
-#define LOGPATH "C:\\Users\\marco\\Desktop\\twMP\\dpnetreplace.log"
+static HMODULE g_hModule = NULL;
+static char g_logPath[MAX_PATH] = {0};
 
 static void LogInit() {
     if (!g_logReady) { InitializeCriticalSection(&g_logLock); g_logReady = true; }
+    if (!g_logPath[0]) {
+        // Write the log next to the DLL, so it works on any machine/user.
+        if (g_hModule && GetModuleFileNameA(g_hModule, g_logPath, MAX_PATH)) {
+            char* slash = strrchr(g_logPath, '\\');
+            if (slash) { strcpy_s(slash + 1, MAX_PATH - (slash + 1 - g_logPath), "dpnetreplace.log"); }
+        } else {
+            strcpy_s(g_logPath, MAX_PATH, "dpnetreplace.log");
+        }
+    }
 }
 static void Log(const char* fmt, ...) {
     if (!g_logReady) return;
     EnterCriticalSection(&g_logLock);
     FILE* f = NULL;
-    if (fopen_s(&f, LOGPATH, "a") == 0 && f) {
+    if (fopen_s(&f, g_logPath, "a") == 0 && f) {
         SYSTEMTIME st; GetLocalTime(&st);
         fprintf(f, "[%02d:%02d:%02d.%03d] ", st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
         va_list a; va_start(a, fmt); vfprintf(f, fmt, a); va_end(a);
@@ -811,6 +820,7 @@ STDAPI DllCanUnloadNow(void) { return g_objects == 0 ? S_OK : S_FALSE; }
 BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(inst);
+        g_hModule = inst;
         LogInit();
         WSADATA wsa; WSAStartup(MAKEWORD(2, 2), &wsa);
         Log("=== dpnetreplace geladen (pid %lu) ===", GetCurrentProcessId());
