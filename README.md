@@ -173,6 +173,26 @@ against the official servers, see the DirectPlay note above.
 * Restructured into a package with logging, CLI (`--root`, `--port`,
   `--log`), and a test suite (35 tests) with a protocol-level fake client
 
+## DirectPlay replacement & tools
+
+The multiplayer game session runs peer-to-peer over DirectPlay8. To keep that
+working on modern Windows (and eventually without the Windows legacy feature),
+the repo also contains:
+
+* `directplay-shim/` — a transparent DirectPlay8 capture shim used to record
+  exactly what the game asks of DirectPlay (ground truth for the replacement).
+* `directplay-replace/` — a real DirectPlay8 replacement DLL. The solo-host
+  path is implemented and live-verified; two-player UDP transport is the next
+  phase. Build with `build.bat`, activate per-user (no admin) with
+  `register.ps1`. See [DIRECTPLAY_REPLACEMENT.md](DIRECTPLAY_REPLACEMENT.md).
+* `tools/` — `directplay-fix.bat` (repairs the Windows DirectPlay component;
+  fixes the `dpnet.dll` crash on session start) and `firewall-allow.bat`
+  (opens the lobby port for LAN clients). Both self-elevate via UAC.
+* `docs/surface-2player-setup.md` — step-by-step setup for a second LAN client.
+
+The committed `include/*.h` DirectPlay8 headers are from Wine (LGPL, see the
+`LICENSE-NOTICE.txt` next to them); everything else is CC0.
+
 ## License
 
 Like the upstream project, this code is dedicated to the public domain under

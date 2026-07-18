@@ -7,12 +7,9 @@ Config.ini
 *.reg
 # Runtime logs
 *.log
+tools/directplay-fix-log.txt
 directplay_fix_log.txt
-# Native build artifacts (build the shim from source via build.bat)
+# Native build intermediates (the built .dll is committed for convenience)
 *.obj
 *.exp
 *.lib
-*.dll
-# LGPL DirectPlay8 headers - fetched, not committed (see fetch-headers.sh)
-directplay-shim/include/
-directplay-replace/include/

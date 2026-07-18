@@ -1,0 +1,10 @@
+Third-party headers - NOT covered by the repository's CC0 dedication.
+
+dplay8.h and dpaddr.h in this directory are the DirectPlay8 COM interface
+headers from the Wine project (https://www.winehq.org/), licensed under the
+GNU Lesser General Public License v2.1 or later. They are vendored here so the
+capture shim builds out of the box; re-fetch the current versions with
+fetch-headers.sh. Their license and copyright remain with the Wine authors.
+
+The rest of this repository (all original code) is dedicated to the public
+domain under CC0 1.0.
