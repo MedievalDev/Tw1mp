@@ -184,5 +184,48 @@ in Win11). Phasen 0–2 sind risikoarm und liefern die tragfähige Basis;
 Phasen 3–4 sind der eigentliche Netzwerk-Kern und brauchen iteratives
 Testen mit zwei echten Clients.
 
-Stand: 2026-07-18. Scoping + Feasibility + Ladepfad verifiziert,
-Experten-Review eingearbeitet. Implementierung: Skelett noch nicht gebaut.
+## Phase 0 ABGESCHLOSSEN — Ground-Truth-Mitschnitt (verifiziert)
+
+Der korrigierte Capture-Shim (`directplay-shim/dpnetshim.cpp`, compiler-
+erzeugte Vtable aus dem Wine-Header, kein ASM-Thunk, Message-Handler in
+`Initialize` gewrappt) lief **stabil durch eine komplette MP-Session** —
+Login, Stadt, F12→F12, Map geladen und spielbar. Damit ist bewiesen:
+COM-Interception + korrekte Vtable + Message-Handler-Wrapping tragen einen
+echten Session-Aufbau.
+
+**Mitgeschnittene Solo-Host-Sequenz (genau das, was F12 auslöst):**
+
+```
+CoCreateInstance(Peer) -> Initialize(handler, flags=0)
+EnumServiceProviders  (2x: Größenabfrage, dann Füllen -> muss TCP/IP-SP liefern)
+GetSPCaps
+SetPeerInfo           (lokaler Spielername)
+Host                  -> Message CREATE_PLAYER (lokaler Spieler)
+GetPeerInfo (2x), GetLocalHostAddresses
+[Gameplay-Schleife]   SendTo -> Message SEND_COMPLETE + Message RECEIVE
+                      (Solo: an sich selbst; jeder RECEIVE-Puffer via ReturnBuffer)
+Close                 -> Message DESTROY_PLAYER
+```
+
+**Nur 10 Peer-Methoden real genutzt (Solo-Host):** Initialize,
+EnumServiceProviders, GetSPCaps, SetPeerInfo, Host, GetPeerInfo,
+GetLocalHostAddresses, SendTo, ReturnBuffer, Close. **4 Nachrichten:**
+CREATE_PLAYER, DESTROY_PLAYER, RECEIVE, SEND_COMPLETE. Alle übrigen ~27
+Peer-Slots bleiben `DPNERR_UNSUPPORTED`-Stubs.
+
+`Connect`, `EnumHosts` und die Nachrichten INDICATE_CONNECT/
+CONNECT_COMPLETE tauchen im Solo-Fall NICHT auf — sie kommen erst dazu,
+wenn ein zweiter Client der Session beitritt (Phase 3/4, 2-Maschinen-Test).
+
+## Phase 1 — nächster Schritt (einzeln testbar)
+
+Minimales Replacement-DLL, das die 10 Solo-Host-Methoden implementiert und
+die 4 Nachrichten liefert, mit **Loopback** (SendTo an die eigene Session
+kommt als RECEIVE zurück) — noch OHNE echtes Netzwerk. Ziel: ein
+**Solo-Spieler startet eine Map über UNSERE DLL** auf einer Maschine.
+Das ist der erste Meilenstein, den ich allein verifizieren kann. Danach
+Phasen 3/4 (echtes UDP + 2. Client) mit zweitem Test-Rechner.
+
+Stand: 2026-07-18. Scoping + Feasibility + Ladepfad + **Phase 0
+(Ground-Truth-Capture) abgeschlossen und verifiziert**. Nächster Schritt:
+Phase-1-Solo-Host-Replacement.

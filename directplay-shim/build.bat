@@ -1,10 +1,10 @@
 @echo off
-rem Build the 32-bit DirectPlay8 interception shim (matches the 32-bit game).
+rem Build the 32-bit DirectPlay8 capture shim (matches the 32-bit game).
 setlocal
 call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars32.bat" >nul
 if errorlevel 1 (echo vcvars32 nicht gefunden & exit /b 1)
 pushd "%~dp0"
-cl /nologo /LD /O2 /EHsc /W3 dpnetshim.cpp ^
+cl /nologo /LD /O2 /EHsc /W3 /I include dpnetshim.cpp ^
    /link /OUT:dpnetshim.dll /DEF:dpnetshim.def ole32.lib user32.lib
 set rc=%errorlevel%
 popd
