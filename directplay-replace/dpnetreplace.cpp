@@ -365,7 +365,7 @@ public:
         m_localDpnid = 1;
         // Bind a UDP socket on an ephemeral port; we advertise the actual
         // bound port via GetLocalHostAddresses so a joiner reaches us.
-        OpenSocket(0);
+        if (!OpenSocket(0)) { Log("Peer::Host -> socket bind failed"); return DPNERR_GENERIC; }
         StartNet();
         Log("Peer::Host -> local player 1, udp port %u", m_boundPort);
         // The local player is created asynchronously on the worker thread.
@@ -374,21 +374,27 @@ public:
         return S_OK;
     }
 
-    STDMETHODIMP GetPeerInfo(DPNID, DPN_PLAYER_INFO* pInfo, DWORD* pdwSize, DWORD) override {
-        DWORD need = sizeof(DPN_PLAYER_INFO) + (DWORD)(m_playerName.size() + 1) * sizeof(WCHAR);
+    STDMETHODIMP GetPeerInfo(DPNID dpnid, DPN_PLAYER_INFO* pInfo, DWORD* pdwSize, DWORD) override {
+        bool self = (dpnid == 0 || dpnid == m_localDpnid);
+        // We only carry our own name; a peer's name comes from the lobby.
+        const std::wstring& nm = self ? m_playerName : m_peerName;
+        DWORD need = sizeof(DPN_PLAYER_INFO) + (DWORD)(nm.size() + 1) * sizeof(WCHAR);
         if (!pInfo || !pdwSize || *pdwSize < need) {
             if (pdwSize) *pdwSize = need;
             return DPNERR_BUFFERTOOSMALL;
         }
         WCHAR* nameDst = reinterpret_cast<WCHAR*>(reinterpret_cast<BYTE*>(pInfo) + sizeof(DPN_PLAYER_INFO));
-        wcscpy_s(nameDst, m_playerName.size() + 1, m_playerName.c_str());
+        wcscpy_s(nameDst, nm.size() + 1, nm.c_str());
         pInfo->dwSize = sizeof(DPN_PLAYER_INFO);
         pInfo->dwInfoFlags = DPNINFO_NAME;
         pInfo->pwszName = nameDst;
         pInfo->pvData = NULL; pInfo->dwDataSize = 0;
-        pInfo->dwPlayerFlags = DPNPLAYER_LOCAL | DPNPLAYER_HOST;
+        DWORD flags = 0;
+        if (self) flags |= DPNPLAYER_LOCAL;
+        if ((self && m_isHost) || (!self && !m_isHost)) flags |= DPNPLAYER_HOST;
+        pInfo->dwPlayerFlags = flags;
         *pdwSize = need;
-        Log("Peer::GetPeerInfo");
+        Log("Peer::GetPeerInfo(%lu)", dpnid);
         return S_OK;
     }
 
@@ -421,20 +427,30 @@ public:
         DPNHANDLE h = 0;
         if (async) { h = NextHandle(); if (phAsyncHandle) *phAsyncHandle = h; }
 
+        // Snapshot the peer state once (net thread may flip it concurrently).
+        EnterCriticalSection(&m_lock);
+        bool hasPeer = m_hasPeer;
+        DPNID localId = m_localDpnid, remoteId = m_remoteDpnid;
+        LeaveCriticalSection(&m_lock);
+
         // If a peer is connected and the target is the peer or the whole
         // session, ship the payload over UDP; it arrives there as RECEIVE.
-        bool toPeer = m_hasPeer &&
-                      (dpnid == m_remoteDpnid || dpnid == DPNID_ALL_PLAYERS_GROUP);
-        if (toPeer) SendWire(PKT_DATA, m_localDpnid, data.data(), (DWORD)data.size());
+        bool toPeer = hasPeer &&
+                      (dpnid == remoteId || dpnid == DPNID_ALL_PLAYERS_GROUP);
+        if (toPeer) SendWire(PKT_DATA, localId, data.data(), (DWORD)data.size());
 
         if (async) {
             Job sc; sc.type = Job::SEND_COMPLETE; sc.handle = h; sc.context = pvAsyncContext;
             Enqueue(sc);
         }
-        // Loopback to self, preserving the solo behaviour the game relies on
-        // (sender id = our own player, which the game recognises as itself).
-        Job rc; rc.type = Job::RECEIVE; rc.dpnid = m_localDpnid; rc.data.swap(data);
-        Enqueue(rc);
+        // Loopback only when alone (solo host): the game relied on receiving
+        // its own sends back in the single-player path. With a peer present,
+        // a directed/broadcast send goes to the peer only (standard
+        // DirectPlay behaviour) so we don't double-apply our own state.
+        if (!hasPeer) {
+            Job rc; rc.type = Job::RECEIVE; rc.dpnid = localId; rc.data.swap(data);
+            Enqueue(rc);
+        }
         return async ? DPNSUCCESS_PENDING : S_OK;
     }
 
@@ -473,11 +489,16 @@ public:
             Log("Peer::Connect -> could not parse host address");
             return DPNERR_INVALIDHOSTADDRESS;
         }
-        OpenSocket(0);  // ephemeral local port
-        m_peerAddr = {};
-        m_peerAddr.sin_family = AF_INET;
-        m_peerAddr.sin_port = htons(port);
-        inet_pton(AF_INET, host.c_str(), &m_peerAddr.sin_addr);
+        if (!OpenSocket(0)) return DPNERR_GENERIC;   // ephemeral local port
+        sockaddr_in pa{};
+        pa.sin_family = AF_INET;
+        pa.sin_port = htons(port);
+        if (inet_pton(AF_INET, host.c_str(), &pa.sin_addr) != 1) {
+            Log("Peer::Connect -> bad host ip %s", host.c_str());
+            closesocket(m_sock); m_sock = INVALID_SOCKET;
+            return DPNERR_INVALIDHOSTADDRESS;
+        }
+        m_peerAddr = pa;
         DPNHANDLE h = NextHandle();
         m_connectHandle = h; m_connectContext = pvAsyncContext;
         if (phAsyncHandle) *phAsyncHandle = h;
@@ -517,14 +538,16 @@ private:
     }
     void StopWorker() {
         if (!m_thread) return;
-        m_stop = true; SetEvent(m_wake);
-        // Wait until the worker has provably exited before freeing the
-        // handles and state it uses - a bounded wait could abandon a still
-        // running thread and let it touch freed memory. The loopback
-        // handler always returns promptly, so this cannot hang in practice.
+        m_stop = true; if (m_wake) SetEvent(m_wake);
+        // The game may call Close() from inside its own message handler,
+        // which runs ON this worker thread - joining ourselves would
+        // deadlock the game. In that case just signal stop and return; the
+        // loop unwinds after the current job and a later teardown from
+        // another thread does the join.
+        if (GetThreadId(m_thread) == GetCurrentThreadId()) return;
         WaitForSingleObject(m_thread, INFINITE);
         CloseHandle(m_thread); m_thread = NULL;
-        CloseHandle(m_wake); m_wake = NULL;
+        HANDLE w = m_wake; m_wake = NULL; if (w) CloseHandle(w);
     }
     void Enqueue(Job& j) {
         EnterCriticalSection(&m_lock);
@@ -536,18 +559,21 @@ private:
 
     // -- networking (Phase 3) -----------------------------------------
 
-    void OpenSocket(unsigned short port) {
+    bool OpenSocket(unsigned short port) {
         m_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-        if (m_sock == INVALID_SOCKET) { Log("socket() failed %d", WSAGetLastError()); return; }
+        if (m_sock == INVALID_SOCKET) { Log("socket() failed %d", WSAGetLastError()); return false; }
         sockaddr_in a{}; a.sin_family = AF_INET; a.sin_addr.s_addr = INADDR_ANY;
         a.sin_port = htons(port);
-        if (bind(m_sock, (sockaddr*)&a, sizeof(a)) != 0)
+        if (bind(m_sock, (sockaddr*)&a, sizeof(a)) != 0) {
             Log("bind() failed %d", WSAGetLastError());
+            closesocket(m_sock); m_sock = INVALID_SOCKET; return false;
+        }
         sockaddr_in bound{}; int bl = sizeof(bound);
         if (getsockname(m_sock, (sockaddr*)&bound, &bl) == 0)
             m_boundPort = ntohs(bound.sin_port);
         // short recv timeout so the net loop can check the stop flag
         DWORD tmo = 200; setsockopt(m_sock, SOL_SOCKET, SO_RCVTIMEO, (char*)&tmo, sizeof(tmo));
+        return true;
     }
 
     void SendWire(BYTE type, DPNID sender, const void* payload, DWORD len) {
@@ -561,14 +587,21 @@ private:
     }
 
     void StartNet() {
+        if (m_sock == INVALID_SOCKET) return;   // no socket -> no net thread
         m_netStop = false;
         m_netThread = CreateThread(NULL, 0, &ReplPeer::NetEntry, this, 0, NULL);
     }
     void StopNet() {
         if (m_netThread) {
             m_netStop = true;
-            WaitForSingleObject(m_netThread, INFINITE);
-            CloseHandle(m_netThread); m_netThread = NULL;
+            // Same re-entrancy guard: a handler dispatched from a net-thread
+            // job could reach Close(); don't join the net thread from itself.
+            if (GetThreadId(m_netThread) != GetCurrentThreadId()) {
+                WaitForSingleObject(m_netThread, INFINITE);
+                CloseHandle(m_netThread); m_netThread = NULL;
+                if (m_sock != INVALID_SOCKET) { closesocket(m_sock); m_sock = INVALID_SOCKET; }
+            }
+            return;
         }
         if (m_sock != INVALID_SOCKET) { closesocket(m_sock); m_sock = INVALID_SOCKET; }
     }
@@ -594,9 +627,11 @@ private:
         switch (type) {
         case PKT_CONNECT: {          // host side: a joiner knocked
             if (!m_isHost || m_hasPeer) break;
+            EnterCriticalSection(&m_lock);
             m_peerAddr = from;
             m_remoteDpnid = 2;
-            m_hasPeer = true;
+            m_hasPeer = true;        // publish address/ids before the flag
+            LeaveCriticalSection(&m_lock);
             Log("net: joiner connected, dpnid 2");
             SendWire(PKT_ACK, m_localDpnid, NULL, 0);   // reply carries no body; ids implied
             Job ic; ic.type = Job::INDICATE_CONNECT; Enqueue(ic);
@@ -605,7 +640,9 @@ private:
         }
         case PKT_ACK: {              // joiner side: host accepted
             if (m_isHost || m_hasPeer) break;
+            EnterCriticalSection(&m_lock);
             m_localDpnid = 2; m_remoteDpnid = 1; m_hasPeer = true;
+            LeaveCriticalSection(&m_lock);
             Log("net: host accepted, local dpnid 2, host dpnid 1");
             Job cc; cc.type = Job::CONNECT_COMPLETE; cc.handle = m_connectHandle;
             cc.context = m_connectContext; cc.result = S_OK; Enqueue(cc);
@@ -683,10 +720,22 @@ private:
         if (!m_handler) return;
         switch (j.type) {
         case Job::INDICATE_CONNECT: {
-            // Host is asked to accept an incoming connection. Returning
-            // S_OK from the handler accepts it.
+            // Host is asked to accept an incoming connection. Give the
+            // handler a real player/device address (a handler that inspects
+            // pAddressPlayer would otherwise NULL-deref).
+            ReplAddress* pa = new ReplAddress();
+            pa->SetSP(&CLSID_DP8SP_TCPIP);
+            char ipbuf[64] = {0};
+            inet_ntop(AF_INET, &m_peerAddr.sin_addr, ipbuf, sizeof(ipbuf));
+            WCHAR ipw[64]; MultiByteToWideChar(CP_ACP, 0, ipbuf, -1, ipw, 64);
+            pa->AddComponent(DPNA_KEY_HOSTNAME, ipw,
+                             (DWORD)(wcslen(ipw) + 1) * sizeof(WCHAR), DPNA_DATATYPE_STRING);
+            DWORD pport = ntohs(m_peerAddr.sin_port);
+            pa->AddComponent(DPNA_KEY_PORT, &pport, sizeof(pport), DPNA_DATATYPE_DWORD);
             DPNMSG_INDICATE_CONNECT m{}; m.dwSize = sizeof(m);
+            m.pAddressPlayer = pa; m.pAddressDevice = pa;
             m_handler(m_context, DPN_MSGID_INDICATE_CONNECT, &m);
+            pa->Release();
             break;
         }
         case Job::CREATE_PLAYER: {
@@ -721,6 +770,7 @@ private:
         case Job::RECEIVE: {
             DWORD size = (DWORD)j.data.size();
             BYTE* buf = (BYTE*)malloc(size ? size : 1);
+            if (!buf) break;   // out of memory: drop this datagram
             if (size) memcpy(buf, j.data.data(), size);
             DPNHANDLE h = NextHandle();
             DPNMSG_RECEIVE m{}; m.dwSize = sizeof(m);
@@ -745,6 +795,7 @@ private:
     PVOID m_context = NULL;
     PVOID m_playerContext = NULL;
     std::wstring m_playerName = L"Player";
+    std::wstring m_peerName = L"Peer";
     bool m_hosting = false;
 
     CRITICAL_SECTION m_lock;
