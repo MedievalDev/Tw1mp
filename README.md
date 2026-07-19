@@ -32,13 +32,22 @@ protocol documentation by [buglord](https://github.com/buglord):
 * `/whois` and `/update` profile commands, `/send` chat relay,
   `/gamecommandtouser` relay for modded use
 * `Config.ini` (auto-generated on first start): server name, MOTD, ports,
-  auto-registration, limits, keepalives
+  auto-registration, registration lock, limits, keepalives
+* Account bans (by username and/or serial key) and a registration lock
 * Optional HTTP status API (JSON `/status`, debug listings, player data
   download) — disabled by default
 * Logging, graceful shutdown with player notification
 * Desktop UI (Windows): start/stop, live log, connected players, minimise to
-  the notification area, and character management — download an account from a
-  live server (e.g. the official one) and import it locally
+  the notification area, and:
+  * **Settings** tab — edit every `Config.ini` value (welcome message, limits,
+    login policy, ports, …) and save or save-and-restart
+  * **Characters** tab — the persistent roster of everyone who has been on the
+    server (with last-online), plus per-account tools: view inventory
+    (read-only cheat check), edit items, delete character or account, ban;
+    download an account from a live server (e.g. the official one) and import
+    it locally
+  * broadcast a message to all connected players, and right-click a player to
+    kick or ban
 * Test suite with a simulated game client covering the whole protocol
 
 ## Quickstart

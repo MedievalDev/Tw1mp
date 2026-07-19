@@ -19,6 +19,9 @@ DEFAULTS = {
         'port': '17171',
         # Register unknown usernames automatically on first login.
         'auto_register': 'true',
+        # Allow new accounts to be created at all. Turn off to lock the roster
+        # once your group is set up; existing accounts keep working.
+        'allow_registration': 'true',
         # Accept any login without checking the database (debugging only!).
         'allow_any_login': 'false',
         # Bind accounts to the client serial identifier (one account per key).
@@ -59,6 +62,36 @@ def _safe(getter, section, key):
         return default
 
 
+def _ini_value(key, value):
+    """Serialise a form value for the INI file."""
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    if key == 'motd':
+        # INI values can't hold real newlines; store the escaped form the
+        # loader understands. Collapse any newline style to \r\n.
+        text = str(value).replace('\r\n', '\n').replace('\r', '\n')
+        return text.replace('\n', '\\r\\n')
+    return str(value)
+
+
+def save_settings(path, server=None, web=None):
+    """Merge the given [Server]/[Web] values into the INI file at `path`,
+    preserving everything else and any comments the loader tolerates."""
+    cfg = configparser.ConfigParser()
+    cfg.read_dict(DEFAULTS)
+    if os.path.exists(path):
+        cfg.read(path)
+    for section, values in (('Server', server), ('Web', web)):
+        if not values:
+            continue
+        if section not in cfg:
+            cfg.add_section(section)
+        for key, value in values.items():
+            cfg[section][key] = _ini_value(key, value)
+    with open(path, 'w') as f:
+        cfg.write(f)
+
+
 class Config:
     def __init__(self, root=None, path=None):
         self.root = root or os.getcwd()
@@ -80,6 +113,8 @@ class Config:
         self.bind = srv.get('bind')
         self.port = _safe(srv.getint, 'Server', 'port')
         self.auto_register = _safe(srv.getboolean, 'Server', 'auto_register')
+        self.allow_registration = _safe(srv.getboolean, 'Server',
+                                        'allow_registration')
         self.allow_any_login = _safe(srv.getboolean, 'Server',
                                      'allow_any_login')
         self.bind_serial = _safe(srv.getboolean, 'Server', 'bind_serial')

@@ -26,6 +26,12 @@ _SQLINIT_dbUserTable = ('CREATE TABLE userTable(username UNIQUE, passHash, '
                         'serial, uniqueSalt, hashIter, lastLogin TIMESTAMP, '
                         'email, location, yob, gender, description)')
 _SQLINIT_dbFormTable = 'CREATE TABLE formTable(form UNIQUE)'
+# Ban list: kind is 'name' or 'serial', value is the username or serial hex.
+# Created on demand (IF NOT EXISTS) so it works with an existing v1 database
+# without a schema-version bump.
+_SQLINIT_dbBannedTable = ('CREATE TABLE IF NOT EXISTS bannedTable('
+                          'kind TEXT, value TEXT, ts TIMESTAMP, reason TEXT, '
+                          'UNIQUE(kind, value))')
 
 _SQL_userID = 'SELECT rowid FROM userTable WHERE username = ?'
 _SQL_userID_Schk = 'SELECT rowid FROM userTable WHERE serial = ?'
@@ -55,6 +61,14 @@ ERR_SHORT_PASSWORD = 3
 ERR_NO_USERNAME = 4
 ERR_USER_EXISTS = 5
 ERR_SERIAL_IN_USE = 6
+ERR_BANNED = 7
+ERR_REGISTRATION_CLOSED = 8
+
+
+def _serial_hex(serial):
+    if isinstance(serial, (bytes, bytearray)):
+        return bytes(serial).hex()
+    return str(serial)
 
 
 def _salt_hash(password, salt, iterations):
@@ -77,6 +91,10 @@ class Database:
         else:
             version = cur.execute(_SQL_dbVersion).fetchone()[0]
         self._upgrade_from(version)
+        # Auxiliary tables that aren't part of the versioned TW1CS schema are
+        # created idempotently so an existing database gains them in place.
+        cur.execute(_SQLINIT_dbBannedTable)
+        self.db.commit()
         cur.close()
 
     def close(self):
@@ -169,6 +187,108 @@ class Database:
 
     # -- accounts -----------------------------------------------------
 
+    def get_serial(self, name):
+        """Stored serial (bytes) for an account, or None."""
+        with self.lock:
+            cur = self.db.cursor()
+            try:
+                row = cur.execute('SELECT serial FROM userTable '
+                                  'WHERE username = ?', (name,)).fetchone()
+                return row[0] if row else None
+            finally:
+                cur.close()
+
+    def delete_playerdata(self, name, form):
+        """Remove a character (original + modified variant) for one form,
+        leaving the account intact. Returns True if anything was removed."""
+        with self.lock:
+            removed = False
+            for modded in (False, True):
+                path = self._playerdata_file(name, form, False, modded)
+                if path and os.path.exists(path):
+                    try:
+                        os.remove(path)
+                        removed = True
+                    except OSError:
+                        log.exception('Failed deleting playerdata for %s', name)
+            return removed
+
+    def delete_user(self, name):
+        """Delete an account and every playerdata file it owns."""
+        with self.lock:
+            cur = self.db.cursor()
+            try:
+                uidres = cur.execute(_SQL_userID, (name,)).fetchone()
+                if uidres is None:
+                    return False
+                uid = uidres[0]
+                forms = cur.execute('SELECT rowid FROM formTable').fetchall()
+                for (fid,) in forms:
+                    for tmpl in (_FORM_PDFile, _FORM_PDFile_Modded):
+                        fpath = os.path.join(self.cfg.playerdata_path,
+                                             tmpl.format(uid, fid))
+                        if os.path.exists(fpath):
+                            try:
+                                os.remove(fpath)
+                            except OSError:
+                                log.exception('Failed deleting %s', fpath)
+                cur.execute('DELETE FROM userTable WHERE rowid = ?', (uid,))
+                self.db.commit()
+                return True
+            finally:
+                cur.close()
+
+    # -- bans ---------------------------------------------------------
+
+    def is_banned(self, username, serial):
+        with self.lock:
+            cur = self.db.cursor()
+            try:
+                row = cur.execute(
+                    'SELECT 1 FROM bannedTable WHERE '
+                    '(kind = "name" AND value = ?) OR '
+                    '(kind = "serial" AND value = ?) LIMIT 1',
+                    (username, _serial_hex(serial))).fetchone()
+                return row is not None
+            finally:
+                cur.close()
+
+    def add_ban(self, kind, value, reason=''):
+        if kind not in ('name', 'serial'):
+            return False
+        with self.lock:
+            cur = self.db.cursor()
+            try:
+                cur.execute('INSERT OR REPLACE INTO bannedTable VALUES '
+                            '(?, ?, ?, ?)',
+                            (kind, value, datetime.datetime.now(), reason))
+                self.db.commit()
+                return True
+            finally:
+                cur.close()
+
+    def remove_ban(self, kind, value):
+        with self.lock:
+            cur = self.db.cursor()
+            try:
+                cur.execute('DELETE FROM bannedTable WHERE kind = ? '
+                            'AND value = ?', (kind, value))
+                self.db.commit()
+                return cur.rowcount > 0
+            finally:
+                cur.close()
+
+    def list_bans(self):
+        """All bans as [(kind, value, ts, reason), ...]."""
+        with self.lock:
+            cur = self.db.cursor()
+            try:
+                return [tuple(row) for row in cur.execute(
+                    'SELECT kind, value, ts, reason FROM bannedTable '
+                    'ORDER BY ts DESC').fetchall()]
+            finally:
+                cur.close()
+
     def list_users(self):
         """All accounts as [(username, lastLogin or None), ...]."""
         with self.lock:
@@ -181,6 +301,8 @@ class Database:
 
     def login(self, username, serial, password):
         """Verify credentials. Returns OK or an ERR_* code."""
+        if self.is_banned(username, serial):
+            return ERR_BANNED
         if self.cfg.allow_any_login:
             return OK
         with self.lock:
@@ -213,6 +335,10 @@ class Database:
     def register(self, username, serial, password, email='', location='',
                  age=1, gender=0, description=''):
         """Create an account. Returns OK or an ERR_* code."""
+        if self.is_banned(username, serial):
+            return ERR_BANNED
+        if not getattr(self.cfg, 'allow_registration', True):
+            return ERR_REGISTRATION_CLOSED
         with self.lock:
             cur = self.db.cursor()
             try:

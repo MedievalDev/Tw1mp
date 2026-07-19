@@ -8,6 +8,7 @@ Uses only tkinter from the standard library, plus tw1mp.tray for the
 notification area, so the "install Python, done" property still holds.
 """
 
+import configparser
 import datetime
 import logging
 import os
@@ -15,10 +16,10 @@ import queue
 import threading
 import time
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from . import __version__, chardata, gamelang, savegame, tray
-from .config import Config
+from .config import DEFAULTS as CONFIG_DEFAULTS, Config, save_settings
 from .database import Database
 from .server import CoreServer
 
@@ -31,6 +32,50 @@ _MAX_LOG_LINES = 2000
 _COL_OK = '#2e9e4f'
 _COL_OFF = '#8a8a8a'
 _COL_ERR = '#c0392b'
+
+# Settings tab layout: (group title, [(section, key, label, type), ...]).
+# type is one of 'str', 'int', 'bool', 'motd'.
+_SETTINGS_SPEC = [
+    ('Identity', [
+        ('Server', 'name', 'Server name', 'str'),
+        ('Server', 'title', 'Title (shown to clients)', 'str'),
+        ('Server', 'motd', 'Welcome message (MOTD)', 'motd'),
+    ]),
+    ('Lobby', [
+        ('Server', 'max_channel_users', 'Max users per channel', 'int'),
+        ('Server', 'channels_per_map', 'Channels per map (1-20)', 'int'),
+        ('Server', 'maps', 'Maps (comma separated)', 'str'),
+        ('Server', 'send_nops', 'Send keepalive /nop every 3s', 'bool'),
+    ]),
+    ('Accounts & login', [
+        ('Server', 'auto_register', 'Auto-register unknown users on login',
+         'bool'),
+        ('Server', 'allow_registration', 'Allow new account creation', 'bool'),
+        ('Server', 'bind_serial', 'One account per serial key', 'bool'),
+        ('Server', 'allow_any_login', 'Accept ANY login (debug only!)', 'bool'),
+        ('Server', 'compat_login_errors',
+         'Compatibility login-error text (TESTERROR)', 'bool'),
+    ]),
+    ('Network  (takes effect after a restart)', [
+        ('Server', 'bind', 'Bind address (empty = all interfaces)', 'str'),
+        ('Server', 'port', 'Port', 'int'),
+    ]),
+    ('Web status server', [
+        ('Web', 'enabled', 'Enable web status server', 'bool'),
+        ('Web', 'port', 'Web port', 'int'),
+        ('Web', 'playerdata_download', 'Allow playerdata download', 'bool'),
+        ('Web', 'debug_api', 'Debug API', 'bool'),
+    ]),
+]
+
+
+def _fmt_stamp(value):
+    """Format a lastLogin/ban timestamp (datetime or ISO string) for a tree."""
+    if not value:
+        return ''
+    if isinstance(value, datetime.datetime):
+        return value.strftime('%Y-%m-%d %H:%M')
+    return str(value)[:16].replace('T', ' ')
 
 
 class QueueLogHandler(logging.Handler):
@@ -117,6 +162,20 @@ class ServerController:
         total = int(delta.total_seconds())
         return f'{total // 3600:d}:{(total // 60) % 60:02d}:{total % 60:02d}'
 
+    def broadcast(self, text):
+        if not self.running:
+            return 0
+        return self.server.broadcast(text)
+
+    def kick(self, name):
+        if not self.running:
+            return False
+        return self.server.kick(name)
+
+    @property
+    def ini_path(self):
+        return os.path.join(self.root_dir, 'Config.ini')
+
     def open_database(self):
         """Database handle for maintenance work.
 
@@ -194,6 +253,7 @@ class MainWindow:
         notebook.pack(fill='both', expand=True, padx=10, pady=(0, 10))
         notebook.add(self._build_server_tab(notebook), text='Server')
         notebook.add(self._build_saves_tab(notebook), text='Characters')
+        notebook.add(self._build_settings_tab(notebook), text='Settings')
 
     def _build_server_tab(self, parent):
         frame = ttk.Frame(parent, padding=8)
@@ -228,24 +288,118 @@ class MainWindow:
         self.tree_players.column('town', width=110)
         self.tree_players.column('since', width=70, anchor='center')
         self.tree_players.pack(fill='both', expand=True)
+        self.tree_players.bind('<Button-3>', self._player_context_menu)
+
+        hint = ttk.Label(right, text='Right-click a player to kick or ban.',
+                         foreground=_COL_OFF)
+        hint.pack(anchor='w', pady=(2, 0))
+
+        bcast = ttk.Frame(right)
+        bcast.pack(fill='x', pady=(6, 0))
+        ttk.Label(bcast, text='Broadcast:').pack(side='left')
+        self.var_bcast = tk.StringVar()
+        entry = ttk.Entry(bcast, textvariable=self.var_bcast)
+        entry.pack(side='left', fill='x', expand=True, padx=4)
+        entry.bind('<Return>', lambda ev: self.send_broadcast())
+        ttk.Button(bcast, text='Send',
+                   command=self.send_broadcast).pack(side='left')
         panes.add(right, weight=2)
         return frame
+
+    # -- broadcast / kick / ban -----------------------------------------
+
+    def send_broadcast(self):
+        text = self.var_bcast.get().strip()
+        if not text:
+            return
+        if not self.controller.running:
+            messagebox.showinfo('Server stopped',
+                                'Start the server before broadcasting.')
+            return
+        count = self.controller.broadcast(text)
+        self.var_bcast.set('')
+        self._set_busy(False,
+                       f'Broadcast sent to {count} '
+                       f'{"player" if count == 1 else "players"}.')
+
+    def _player_context_menu(self, event):
+        row = self.tree_players.identify_row(event.y)
+        if not row:
+            return
+        self.tree_players.selection_set(row)
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label=f'Kick {row}',
+                         command=lambda: self.kick_player(row))
+        menu.add_command(label=f'Ban {row}',
+                         command=lambda: self._do_ban(row))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def kick_player(self, name):
+        if not self.controller.running:
+            return
+        if messagebox.askokcancel(
+                'Kick player', f'Disconnect {name} from the server?'):
+            if self.controller.kick(name):
+                self._set_busy(False, f'{name} kicked.')
+
+    def _do_ban(self, account):
+        """Ban an account by username and serial, and kick it if online."""
+        reason = simpledialog.askstring(
+            'Ban player',
+            f'Reason for banning {account} (optional):', parent=self.root)
+        if reason is None:  # cancelled
+            return
+        db, needs_close = self.controller.open_database()
+        try:
+            db.add_ban('name', account, reason)
+            serial = db.get_serial(account)
+            if serial:
+                db.add_ban('serial', bytes(serial).hex(), reason)
+        finally:
+            if needs_close:
+                db.close()
+        if self.controller.running:
+            self.controller.kick(account,
+                                 'You have been banned from this server')
+        self._set_busy(False, f'{account} banned (username + serial key) and '
+                              'disconnected.')
+        self.refresh_bans()
 
     def _build_saves_tab(self, parent):
         frame = ttk.Frame(parent, padding=8)
 
-        ttk.Label(frame, text='Local accounts and their stored characters'
+        ttk.Label(frame, text='Local accounts and their stored characters '
+                  '(everyone who has ever been on the server)'
                   ).pack(anchor='w')
         self.tree_saves = ttk.Treeview(
-            frame, columns=('size', 'changed'), show='tree headings',
-            height=9, selectmode='browse')
+            frame, columns=('size', 'changed', 'seen'), show='tree headings',
+            height=7, selectmode='browse')
         self.tree_saves.heading('#0', text='Account')
         self.tree_saves.heading('size', text='Character')
         self.tree_saves.heading('changed', text='Last change')
-        self.tree_saves.column('#0', width=200)
+        self.tree_saves.heading('seen', text='Last online')
+        self.tree_saves.column('#0', width=180)
         self.tree_saves.column('size', width=120, anchor='e')
-        self.tree_saves.column('changed', width=160, anchor='center')
+        self.tree_saves.column('changed', width=130, anchor='center')
+        self.tree_saves.column('seen', width=130, anchor='center')
         self.tree_saves.pack(fill='both', expand=True, pady=(2, 8))
+
+        manage = ttk.LabelFrame(frame, text='Manage selected account',
+                                padding=8)
+        manage.pack(fill='x', pady=(0, 8))
+        ttk.Button(manage, text='View inventory',
+                   command=self.view_inventory).pack(side='left')
+        ttk.Button(manage, text='Edit items...',
+                   command=self.edit_items).pack(side='left', padx=6)
+        ttk.Button(manage, text='Delete character',
+                   command=self.delete_character).pack(side='left')
+        ttk.Button(manage, text='Delete account',
+                   command=self.delete_account).pack(side='left', padx=6)
+        ttk.Button(manage, text='Ban',
+                   command=self.ban_account).pack(side='left')
 
         box = ttk.LabelFrame(
             frame, text='Import from a live server', padding=8)
@@ -271,8 +425,6 @@ class MainWindow:
                    command=self.import_file).pack(side='left', padx=6)
         ttk.Button(row2, text='Export selected...',
                    command=self.export_selected).pack(side='left')
-        ttk.Button(row2, text='Edit items...',
-                   command=self.edit_items).pack(side='left', padx=6)
         ttk.Button(row2, text='Refresh',
                    command=self.refresh_accounts).pack(side='right')
 
@@ -285,7 +437,138 @@ class MainWindow:
             self.lbl_save.configure(
                 text='Downloading needs the game installed on this machine '
                      '(serial key and stored login come from it).')
+
+        bans = ttk.LabelFrame(frame, text='Banned', padding=8)
+        bans.pack(fill='x', pady=(8, 0))
+        self.tree_bans = ttk.Treeview(
+            bans, columns=('value', 'reason', 'when'), show='tree headings',
+            height=3, selectmode='browse')
+        self.tree_bans.heading('#0', text='Type')
+        self.tree_bans.heading('value', text='Name / serial')
+        self.tree_bans.heading('reason', text='Reason')
+        self.tree_bans.heading('when', text='Since')
+        self.tree_bans.column('#0', width=60)
+        self.tree_bans.column('value', width=200)
+        self.tree_bans.column('reason', width=160)
+        self.tree_bans.column('when', width=120, anchor='center')
+        self.tree_bans.pack(side='left', fill='x', expand=True)
+        ttk.Button(bans, text='Unban selected',
+                   command=self.unban_selected).pack(side='right', padx=(6, 0))
+        self.refresh_bans()
         return frame
+
+    def _build_settings_tab(self, parent):
+        outer = ttk.Frame(parent, padding=8)
+        canvas = tk.Canvas(outer, highlightthickness=0)
+        vsb = ttk.Scrollbar(outer, orient='vertical', command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side='right', fill='y')
+        canvas.pack(side='left', fill='both', expand=True)
+        body = ttk.Frame(canvas)
+        win = canvas.create_window((0, 0), window=body, anchor='nw')
+        body.bind('<Configure>',
+                  lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
+        canvas.bind('<Configure>',
+                    lambda e: canvas.itemconfigure(win, width=e.width))
+
+        self._setting_widgets = {}
+        cur = self._read_ini()
+        for group, fields in _SETTINGS_SPEC:
+            box = ttk.LabelFrame(body, text=group, padding=8)
+            box.pack(fill='x', pady=(0, 8), padx=2)
+            box.columnconfigure(1, weight=1)
+            for r, (section, key, label, typ) in enumerate(fields):
+                if typ == 'bool':
+                    var = tk.BooleanVar(value=cur.getboolean(section, key))
+                    ttk.Checkbutton(box, text=label, variable=var).grid(
+                        row=r, column=0, columnspan=2, sticky='w', pady=2)
+                    self._setting_widgets[(section, key)] = ('bool', var)
+                elif typ == 'motd':
+                    ttk.Label(box, text=label).grid(
+                        row=r, column=0, sticky='nw', pady=2)
+                    txt = tk.Text(box, height=4, wrap='word',
+                                  font=('Consolas', 9))
+                    txt.insert('1.0',
+                               cur.get(section, key).replace('\\r\\n', '\n'))
+                    txt.grid(row=r, column=1, sticky='ew', pady=2)
+                    self._setting_widgets[(section, key)] = ('motd', txt)
+                else:
+                    ttk.Label(box, text=label).grid(
+                        row=r, column=0, sticky='w', pady=2, padx=(0, 8))
+                    var = tk.StringVar(value=cur.get(section, key))
+                    ttk.Entry(box, textvariable=var).grid(
+                        row=r, column=1, sticky='ew', pady=2)
+                    self._setting_widgets[(section, key)] = (typ, var)
+
+        bar = ttk.Frame(body)
+        bar.pack(fill='x', pady=(4, 2), padx=2)
+        ttk.Button(bar, text='Save', command=self.save_settings).pack(
+            side='left')
+        ttk.Button(bar, text='Save & restart server',
+                   command=lambda: self.save_settings(restart=True)).pack(
+                       side='left', padx=6)
+        ttk.Button(bar, text='Reload', command=self.reload_settings).pack(
+            side='left')
+        self.lbl_settings = ttk.Label(body, text='', wraplength=760,
+                                      justify='left', foreground=_COL_OK)
+        self.lbl_settings.pack(anchor='w', pady=(4, 0), padx=2)
+        return outer
+
+    def _read_ini(self):
+        cp = configparser.ConfigParser()
+        cp.read_dict(CONFIG_DEFAULTS)
+        path = self.controller.ini_path
+        if os.path.exists(path):
+            cp.read(path)
+        return cp
+
+    def save_settings(self, restart=False):
+        server, web = {}, {}
+        for (section, key), (typ, widget) in self._setting_widgets.items():
+            target = server if section == 'Server' else web
+            if typ == 'bool':
+                target[key] = bool(widget.get())
+            elif typ == 'motd':
+                target[key] = widget.get('1.0', 'end-1c')
+            elif typ == 'int':
+                raw = widget.get().strip()
+                if not raw.lstrip('-').isdigit():
+                    messagebox.showerror(
+                        'Invalid value', f'"{key}" must be a whole number.')
+                    return
+                target[key] = int(raw)
+            else:
+                target[key] = widget.get()
+        try:
+            save_settings(self.controller.ini_path, server=server, web=web)
+        except OSError as exc:
+            messagebox.showerror('Save failed', str(exc))
+            return
+        msg = 'Settings saved.'
+        if restart:
+            if self.controller.running:
+                self.stop_server()
+                self.start_server()
+                msg += ' Server restarted.'
+            else:
+                self.start_server()
+                msg += ' Server started.'
+        elif self.controller.running:
+            msg += ' Restart the server to apply the changes.'
+        self.lbl_settings.configure(text=msg)
+
+    def reload_settings(self):
+        cur = self._read_ini()
+        for (section, key), (typ, widget) in self._setting_widgets.items():
+            if typ == 'bool':
+                widget.set(cur.getboolean(section, key))
+            elif typ == 'motd':
+                widget.delete('1.0', 'end')
+                widget.insert('1.0',
+                              cur.get(section, key).replace('\\r\\n', '\n'))
+            else:
+                widget.set(cur.get(section, key))
+        self.lbl_settings.configure(text='Reloaded from Config.ini.')
 
     def _fill_sources(self):
         servers = []
@@ -344,7 +627,7 @@ class MainWindow:
             self.tree_saves.delete(item)
         db, needs_close = self.controller.open_database()
         try:
-            for name, _last in db.list_users():
+            for name, last in db.list_users():
                 blob = db.get_playerdata(name, savegame.DEFAULT_FORM)
                 if blob:
                     size = f'{len(blob):,} bytes'.replace(',', ' ')
@@ -354,12 +637,127 @@ class MainWindow:
                 if db.has_modded_playerdata(name, savegame.DEFAULT_FORM):
                     size += '  (modified variant present)'
                 self.tree_saves.insert('', 'end', text=name,
-                                       values=(size, stamp))
+                                       values=(size, stamp, _fmt_stamp(last)))
         except Exception:
             log.exception('Could not list accounts')
         finally:
             if needs_close:
                 db.close()
+
+    def refresh_bans(self):
+        if not hasattr(self, 'tree_bans'):
+            return
+        for item in self.tree_bans.get_children():
+            self.tree_bans.delete(item)
+        db, needs_close = self.controller.open_database()
+        try:
+            for kind, value, ts, reason in db.list_bans():
+                self.tree_bans.insert('', 'end', text=kind,
+                                      values=(value, reason or '',
+                                              _fmt_stamp(ts)))
+        except Exception:
+            log.exception('Could not list bans')
+        finally:
+            if needs_close:
+                db.close()
+
+    def unban_selected(self):
+        sel = self.tree_bans.selection()
+        if not sel:
+            messagebox.showinfo('No ban selected',
+                                'Select a ban entry to remove.')
+            return
+        kind = self.tree_bans.item(sel[0], 'text')
+        value = self.tree_bans.item(sel[0], 'values')[0]
+        db, needs_close = self.controller.open_database()
+        try:
+            db.remove_ban(kind, value)
+        finally:
+            if needs_close:
+                db.close()
+        self.refresh_bans()
+
+    def view_inventory(self):
+        account = self._selected_account()
+        if not account:
+            messagebox.showinfo('No account selected',
+                                'Select an account to inspect first.')
+            return
+        db, needs_close = self.controller.open_database()
+        try:
+            modded = db.has_modded_playerdata(account, savegame.DEFAULT_FORM)
+            blob = db.get_playerdata(account, savegame.DEFAULT_FORM,
+                                     modded=modded)
+        finally:
+            if needs_close:
+                db.close()
+        if not blob:
+            messagebox.showinfo('Nothing to show',
+                                f'{account} has no stored character.')
+            return
+        try:
+            InventoryViewer(self, account, blob, modded)
+        except chardata.CharDataError as exc:
+            messagebox.showerror('Cannot read character', str(exc))
+
+    def delete_character(self):
+        account = self._selected_account()
+        if not account:
+            messagebox.showinfo('No account selected',
+                                'Select the account whose character to delete.')
+            return
+        if not messagebox.askokcancel(
+                'Delete character',
+                f"Delete {account}'s stored character (and any modified "
+                'variant)? The account itself stays.'):
+            return
+        if account in self.controller.players() and not messagebox.askokcancel(
+                'Player online',
+                f'{account} is connected right now. Delete anyway?'):
+            return
+        db, needs_close = self.controller.open_database()
+        try:
+            ok = db.delete_playerdata(account, savegame.DEFAULT_FORM)
+        finally:
+            if needs_close:
+                db.close()
+        self._set_busy(False, f'Character for {account} deleted.' if ok
+                       else f'{account} had no stored character.')
+        self.refresh_accounts()
+
+    def delete_account(self):
+        account = self._selected_account()
+        if not account:
+            messagebox.showinfo('No account selected',
+                                'Select the account to delete.')
+            return
+        if account in self.controller.players():
+            messagebox.showinfo(
+                'Player online',
+                f'{account} is connected. Kick them first, then delete.')
+            return
+        if not messagebox.askokcancel(
+                'Delete account',
+                f'Permanently delete the account "{account}" and ALL its '
+                'saves? This cannot be undone.', icon='warning'):
+            return
+        db, needs_close = self.controller.open_database()
+        try:
+            ok = db.delete_user(account)
+        finally:
+            if needs_close:
+                db.close()
+        self._set_busy(False, f'Account {account} deleted.' if ok
+                       else f'Could not delete {account}.')
+        self.refresh_accounts()
+
+    def ban_account(self):
+        account = self._selected_account()
+        if not account:
+            messagebox.showinfo('No account selected',
+                                'Select the account to ban.')
+            return
+        self._do_ban(account)
 
     @staticmethod
     def _playerdata_mtime(db, name):
@@ -849,6 +1247,74 @@ class ItemEditor:
                 'not affected.', parent=self.win):
             self.owner.remove_modified_character(self.account)
             self.win.destroy()
+
+
+class InventoryViewer:
+    """Read-only list of every item stack a character carries.
+
+    For spotting cheated inventories - shows all items with their quantity
+    or gear class; nothing here writes back to the save.
+    """
+
+    def __init__(self, owner, account, blob, modded=False):
+        raw = chardata.decompress(blob)
+        self.items = chardata.parse_items(raw)
+        self.names = [gamelang.item_name(s.name) for s in self.items]
+
+        self.win = tk.Toplevel(owner.root)
+        self.win.title(f'Inventory - {account}'
+                       + (' (modified variant)' if modded else ''))
+        self.win.geometry('640x560')
+        self.win.transient(owner.root)
+
+        ttk.Label(self.win, padding=(10, 8, 10, 0), justify='left',
+                  text=f'{len(self.items)} item stacks found. Read-only view '
+                       'to check what a player is carrying.').pack(anchor='w')
+
+        filt = ttk.Frame(self.win, padding=(10, 6, 10, 0))
+        filt.pack(fill='x')
+        ttk.Label(filt, text='Search:').pack(side='left')
+        self.var_search = tk.StringVar()
+        self.var_search.trace_add('write', lambda *_: self._fill())
+        ttk.Entry(filt, textvariable=self.var_search,
+                  width=28).pack(side='left', padx=(4, 0))
+        ttk.Label(filt, text='(name or internal id)').pack(side='left', padx=6)
+
+        wrap = ttk.Frame(self.win, padding=10)
+        wrap.pack(fill='both', expand=True)
+        self.tree = ttk.Treeview(wrap, columns=('id', 'qty', 'kind'),
+                                 show='tree headings', selectmode='browse')
+        self.tree.heading('#0', text='Item')
+        self.tree.heading('id', text='Internal id')
+        self.tree.heading('qty', text='Qty / Class')
+        self.tree.heading('kind', text='Type')
+        self.tree.column('#0', width=220)
+        self.tree.column('id', width=170)
+        self.tree.column('qty', width=80, anchor='e')
+        self.tree.column('kind', width=90, anchor='center')
+        scroll = ttk.Scrollbar(wrap, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scroll.set)
+        scroll.pack(side='right', fill='y')
+        self.tree.pack(side='left', fill='both', expand=True)
+        self._fill()
+
+        bar = ttk.Frame(self.win, padding=(10, 0, 10, 10))
+        bar.pack(fill='x')
+        ttk.Button(bar, text='Close',
+                   command=self.win.destroy).pack(side='right')
+
+    def _fill(self):
+        term = self.var_search.get().strip().lower()
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+        for idx, stack in enumerate(self.items):
+            display = self.names[idx]
+            if term and term not in display.lower() \
+                    and term not in stack.name.lower():
+                continue
+            kind = 'class' if stack.kind == 'class' else 'stack'
+            self.tree.insert('', 'end', text=display,
+                             values=(stack.name, stack.quantity, kind))
 
 
 def run(root_dir=None, start_server=True, minimised=False):

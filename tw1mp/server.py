@@ -32,6 +32,8 @@ _LOGIN_ERRORS = {
     database.ERR_NO_USERNAME: 'Please log in or create an account',
     database.ERR_USER_EXISTS: 'This username is already taken',
     database.ERR_SERIAL_IN_USE: 'This serial key already has an account',
+    database.ERR_BANNED: 'You are banned from this server',
+    database.ERR_REGISTRATION_CLOSED: 'Registration is closed on this server',
 }
 
 
@@ -77,6 +79,7 @@ class ConnectionHandler(socketserver.BaseRequestHandler):
         self.guid = None
         self.data = b''
         self._reserved = None
+        self._kick = False  # set by CoreServer.kick() to drop this session
         self.use_modded = False  # this session runs on a modified character
         self.SK = bytearray(protocol.SERIAL_KEY_BASE)
 
@@ -239,9 +242,11 @@ class ConnectionHandler(socketserver.BaseRequestHandler):
         with self.server.state.lock:
             self.server.state.activeUsers[self.user.name] = self
         while True:
-            # flush pending outgoing messages
+            # flush pending outgoing messages (incl. any kick notice)
             while not self._sQueue.empty():
                 self.request.sendall(self._sQueue.get())
+            if self._kick:
+                break
             # poll for incoming data
             self.request.settimeout(_SHORT_TIMEOUT)
             try:
@@ -316,6 +321,29 @@ class CoreServer(socketserver.ThreadingTCPServer):
     def getPlayer(self, username):
         with self.state.lock:
             return self.state.activeUsers.get(username)
+
+    def broadcast(self, text):
+        """Send a system message to every logged-in player. Returns the
+        number of recipients."""
+        text = str(text).replace('"', "'").replace('\x00', ' ')
+        with self.state.lock:
+            targets = [c for c in self.state.activeUsers.values() if c.user]
+        if targets:
+            self.dist.add({'target': targets, 'message': em(f'/admin {text}')})
+        log.info('Broadcast to %d player(s): %s', len(targets), text)
+        return len(targets)
+
+    def kick(self, username, notice='You have been kicked from the server'):
+        """Drop a connected player. Returns True if they were online."""
+        with self.state.lock:
+            con = self.state.activeUsers.get(username)
+            if not con or not con.user:
+                return False
+            if notice:
+                con._sQueue.put(em(f'/admin {notice}'))
+            con._kick = True
+        log.info('Kicked %s', username)
+        return True
 
     def debug_dict_players(self):
         with self.state.lock:
