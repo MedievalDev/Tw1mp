@@ -33,6 +33,10 @@ _COL_OK = '#2e9e4f'
 _COL_OFF = '#8a8a8a'
 _COL_ERR = '#c0392b'
 
+# Item list tabs: (label, chardata category key; None means "everything").
+_ITEM_TABS = (('All', None), ('Weapons', 'weapon'), ('Armour', 'armour'),
+              ('Stones', 'stone'), ('Potions', 'potion'), ('Other', 'other'))
+
 # Settings tab layout: (group title, [(section, key, label, type), ...]).
 # type is one of 'str', 'int', 'bool', 'motd'.
 _SETTINGS_SPEC = [
@@ -67,6 +71,27 @@ _SETTINGS_SPEC = [
         ('Web', 'debug_api', 'Debug API', 'bool'),
     ]),
 ]
+
+
+def _make_item_tree(parent):
+    """One item list (used per category tab by the editor and the viewer)."""
+    tree = ttk.Treeview(parent, columns=('id', 'qty', 'state'),
+                        show='tree headings', selectmode='browse')
+    tree.heading('#0', text='Item')
+    tree.heading('id', text='Internal id')
+    tree.heading('qty', text='Qty / Class')
+    tree.heading('state', text='')
+    tree.column('#0', width=210)
+    tree.column('id', width=165)
+    tree.column('qty', width=80, anchor='e')
+    tree.column('state', width=95, anchor='center')
+    scroll = ttk.Scrollbar(parent, command=tree.yview)
+    tree.configure(yscrollcommand=scroll.set)
+    scroll.pack(side='right', fill='y')
+    tree.pack(side='left', fill='both', expand=True)
+    tree.tag_configure('locked', foreground='#8a8a8a')
+    tree.tag_configure('changed', foreground='#2e7d32')
+    return tree
 
 
 def _fmt_stamp(value):
@@ -1455,25 +1480,15 @@ class ItemEditor:
         ttk.Label(filters, text='(name, id or exact quantity)'
                   ).pack(side='left', padx=6)
 
-        wrap = ttk.Frame(self.win, padding=10)
-        wrap.pack(fill='both', expand=True)
-        self.tree = ttk.Treeview(wrap, columns=('id', 'qty', 'state'),
-                                 show='tree headings', selectmode='browse')
-        self.tree.heading('#0', text='Item')
-        self.tree.heading('id', text='Internal id')
-        self.tree.heading('qty', text='Qty / Class')
-        self.tree.heading('state', text='')
-        self.tree.column('#0', width=200)
-        self.tree.column('id', width=160)
-        self.tree.column('qty', width=80, anchor='e')
-        self.tree.column('state', width=100, anchor='center')
-        scroll = ttk.Scrollbar(wrap, command=self.tree.yview)
-        self.tree.configure(yscrollcommand=scroll.set)
-        scroll.pack(side='right', fill='y')
-        self.tree.pack(side='left', fill='both', expand=True)
-        self.tree.tag_configure('locked', foreground='#8a8a8a')
-        self.tree.tag_configure('changed', foreground='#2e7d32')
-        self.tree.bind('<Double-1>', self._on_double_click)
+        self.nb = ttk.Notebook(self.win, padding=10)
+        self.nb.pack(fill='both', expand=True)
+        self.trees = {}
+        for label, key in _ITEM_TABS:
+            page = ttk.Frame(self.nb)
+            self.nb.add(page, text=label)
+            tree = _make_item_tree(page)
+            tree.bind('<Double-1>', self._on_double_click)
+            self.trees[key] = tree
 
         self._apply_filter()
 
@@ -1491,8 +1506,9 @@ class ItemEditor:
         editable_only = self.var_editable.get()
         term = self.var_search.get().strip().lower()
         term_qty = int(term) if term.isdigit() else None
-        for row in self.tree.get_children():
-            self.tree.delete(row)
+        for tree in self.trees.values():
+            tree.delete(*tree.get_children())
+        counts = {key: 0 for _label, key in _ITEM_TABS}
         for idx, stack in enumerate(self.items):
             if editable_only and not stack.editable:
                 continue
@@ -1513,11 +1529,17 @@ class ItemEditor:
                 tag, state = '', 'class'
             else:
                 tag, state = '', ''
-            self.tree.insert('', 'end', iid=str(idx), text=display,
-                             values=(stack.name, qty, state), tags=(tag,))
+            # every row goes into its category tab and into the "All" tab
+            for key in (None, chardata.category(stack.name)):
+                self.trees[key].insert('', 'end', iid=str(idx), text=display,
+                                       values=(stack.name, qty, state),
+                                       tags=(tag,))
+                counts[key] += 1
+        for i, (label, key) in enumerate(_ITEM_TABS):
+            self.nb.tab(i, text=f'{label} ({counts[key]})')
 
     def _on_double_click(self, event):
-        row = self.tree.identify_row(event.y)
+        row = event.widget.identify_row(event.y)   # whichever tab was clicked
         if not row:
             return
         idx = int(row)
@@ -1592,22 +1614,13 @@ class InventoryViewer:
                   width=28).pack(side='left', padx=(4, 0))
         ttk.Label(filt, text='(name or internal id)').pack(side='left', padx=6)
 
-        wrap = ttk.Frame(self.win, padding=10)
-        wrap.pack(fill='both', expand=True)
-        self.tree = ttk.Treeview(wrap, columns=('id', 'qty', 'kind'),
-                                 show='tree headings', selectmode='browse')
-        self.tree.heading('#0', text='Item')
-        self.tree.heading('id', text='Internal id')
-        self.tree.heading('qty', text='Qty / Class')
-        self.tree.heading('kind', text='Type')
-        self.tree.column('#0', width=220)
-        self.tree.column('id', width=170)
-        self.tree.column('qty', width=80, anchor='e')
-        self.tree.column('kind', width=90, anchor='center')
-        scroll = ttk.Scrollbar(wrap, command=self.tree.yview)
-        self.tree.configure(yscrollcommand=scroll.set)
-        scroll.pack(side='right', fill='y')
-        self.tree.pack(side='left', fill='both', expand=True)
+        self.nb = ttk.Notebook(self.win, padding=10)
+        self.nb.pack(fill='both', expand=True)
+        self.trees = {}
+        for label, key in _ITEM_TABS:
+            page = ttk.Frame(self.nb)
+            self.nb.add(page, text=label)
+            self.trees[key] = _make_item_tree(page)
         self._fill()
 
         bar = ttk.Frame(self.win, padding=(10, 0, 10, 10))
@@ -1617,16 +1630,22 @@ class InventoryViewer:
 
     def _fill(self):
         term = self.var_search.get().strip().lower()
-        for row in self.tree.get_children():
-            self.tree.delete(row)
+        for tree in self.trees.values():
+            tree.delete(*tree.get_children())
+        counts = {key: 0 for _label, key in _ITEM_TABS}
         for idx, stack in enumerate(self.items):
             display = self.names[idx]
             if term and term not in display.lower() \
                     and term not in stack.name.lower():
                 continue
             kind = 'class' if stack.kind == 'class' else 'stack'
-            self.tree.insert('', 'end', text=display,
-                             values=(stack.name, stack.quantity, kind))
+            for key in (None, chardata.category(stack.name)):
+                self.trees[key].insert('', 'end', iid=str(idx), text=display,
+                                       values=(stack.name, stack.quantity,
+                                               kind))
+                counts[key] += 1
+        for i, (label, key) in enumerate(_ITEM_TABS):
+            self.nb.tab(i, text=f'{label} ({counts[key]})')
 
 
 def run(root_dir=None, start_server=True, minimised=False):

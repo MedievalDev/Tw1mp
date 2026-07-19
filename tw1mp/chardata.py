@@ -31,6 +31,25 @@ EDITABLE_PREFIXES = (
 GEAR_PREFIXES = ('WP_', 'AR_')
 _CLASS_FIELD_OFFSET = 22
 
+# Coarse grouping for the UI. 'ART_ADD_*' are the damage-modifier stones
+# socketed into gear ("Bewirkt 50% mehr Feuerschaden"); everything without a
+# known prefix (spells, ingredients, traps, quest items) lands in 'other'.
+_CATEGORY_PREFIXES = (
+    ('stone', ('ART_ADD_',)),
+    ('weapon', ('WP_',)),
+    ('armour', ('AR_',)),
+    ('potion', ('POTION_',)),
+)
+CATEGORIES = ('weapon', 'armour', 'stone', 'potion', 'other')
+
+
+def category(item_id):
+    """Coarse category of an item id, one of CATEGORIES."""
+    for name, prefixes in _CATEGORY_PREFIXES:
+        if item_id.startswith(prefixes):
+            return name
+    return 'other'
+
 _RE_ID = re.compile(rb'[A-Z][A-Z0-9_]{2,39}')
 _SIG = b'\xff\xff\xff\xff\x00\x00\x00\x00'
 

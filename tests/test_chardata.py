@@ -281,3 +281,29 @@ class TestModdedServing(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestCategory(unittest.TestCase):
+    """Coarse grouping used for the item-list tabs."""
+
+    def test_known_prefixes(self):
+        self.assertEqual(chardata.category('WP_SWORD_01'), 'weapon')
+        self.assertEqual(chardata.category('AR_HELM_01'), 'armour')
+        self.assertEqual(chardata.category('POTION_HEALING_01'), 'potion')
+
+    def test_damage_stones(self):
+        self.assertEqual(chardata.category('ART_ADD_FIRE50'), 'stone')
+        self.assertEqual(chardata.category('ART_ADD_SPIRIT20'), 'stone')
+
+    def test_stones_are_not_armour(self):
+        # 'ART_ADD_' must not be swallowed by the 'AR_' armour prefix.
+        self.assertNotEqual(chardata.category('ART_ADD_FIRE50'), 'armour')
+
+    def test_everything_else_is_other(self):
+        for item in ('MAGIC_FIREBOLT', 'ING_12', 'LOCKPICK', 'TRAP_BOMB_04',
+                     'MUSHROOM_01', 'QITEM_040', 'THE_TAINT'):
+            self.assertEqual(chardata.category(item), 'other', item)
+
+    def test_every_category_is_declared(self):
+        for item in ('WP_A', 'AR_A', 'ART_ADD_A', 'POTION_A', 'ZZZ'):
+            self.assertIn(chardata.category(item), chardata.CATEGORIES)
