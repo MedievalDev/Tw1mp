@@ -241,15 +241,20 @@ class Database:
                 return False
 
     def get_snapshot(self, name, snapname):
+        """Slot contents, or None if there is no such slot.
+
+        An existing but empty slot returns b'' - that is a deliberate
+        "fresh character" slot, not a missing one.
+        """
         folder = self._snapshot_dir(name)
         if not folder:
-            return b''
+            return None
         fpath = os.path.join(folder, _safe_snap(snapname) + '.bin')
         try:
             with open(fpath, 'rb') as f:
                 return f.read()
         except OSError:
-            return b''
+            return None
 
     def delete_snapshot(self, name, snapname):
         folder = self._snapshot_dir(name)

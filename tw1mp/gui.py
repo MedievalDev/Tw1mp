@@ -492,8 +492,10 @@ class MainWindow:
         btns.pack(fill='x')
         ttk.Button(btns, text='Activate selected',
                    command=self.sg_activate).pack(side='left')
+        ttk.Button(btns, text='New savegame...',
+                   command=self.sg_new).pack(side='left', padx=6)
         ttk.Button(btns, text='Save current as...',
-                   command=self.sg_save_current).pack(side='left', padx=6)
+                   command=self.sg_save_current).pack(side='left')
         ttk.Button(btns, text='Rename...',
                    command=self.sg_rename).pack(side='left')
         ttk.Button(btns, text='Delete',
@@ -554,9 +556,11 @@ class MainWindow:
                 self.lbl_sg_active.configure(
                     text='Active character: none stored yet.')
             for snapname, sz, mtime in db.list_snapshots(account):
+                size = ('empty (new character)' if sz == 0
+                        else f'{sz:,} bytes'.replace(',', ' '))
                 self.tree_sg.insert(
                     '', 'end', text=snapname,
-                    values=(f'{sz:,} bytes'.replace(',', ' '),
+                    values=(size,
                             _fmt_stamp(datetime.datetime.fromtimestamp(mtime))))
         except Exception:
             log.exception('Could not load snapshots')
@@ -592,6 +596,28 @@ class MainWindow:
                               if ok else 'Could not save (invalid name?).')
         self._sg_load()
 
+    def sg_new(self):
+        """Create an empty slot: activating it starts a brand-new character."""
+        account = self._sg_account()
+        if not account:
+            return
+        name = simpledialog.askstring(
+            'New savegame',
+            'Name for the new (empty) savegame:', parent=self.root)
+        if not name:
+            return
+        db, needs_close = self.controller.open_database()
+        try:
+            ok = db.save_snapshot(account, name, b'')
+        finally:
+            if needs_close:
+                db.close()
+        self.lbl_sg.configure(
+            text=f'Created empty savegame "{name}". Activate it to start a '
+                 'brand-new character next time you play.'
+            if ok else 'Could not create (invalid name?).')
+        self._sg_load()
+
     def sg_activate(self):
         account = self._sg_account()
         snap = self._sg_selected()
@@ -599,11 +625,28 @@ class MainWindow:
             messagebox.showinfo('No save selected',
                                 'Pick a saved character to activate.')
             return
+        db, needs_close = self.controller.open_database()
+        try:
+            blob = db.get_snapshot(account, snap)
+        finally:
+            if needs_close:
+                db.close()
+        if blob is None:
+            messagebox.showerror('Activate failed',
+                                 'That save could not be read.')
+            return
+        fresh = len(blob) == 0
+        question = (
+            f'Start a brand-new character for {account} using "{snap}"?\n\n'
+            'The current active character will be cleared, so the game '
+            'creates a fresh one.'
+            if fresh else
+            f'Make "{snap}" the active character for {account}?\n\n'
+            'This replaces the current active character.')
         if not messagebox.askokcancel(
                 'Activate save',
-                f'Make "{snap}" the active character for {account}?\n\n'
-                'This replaces the current active character. Save the current '
-                'one first (Save current as...) if you want to keep it.'):
+                question + ' Save the current one first '
+                           '(Save current as...) if you want to keep it.'):
             return
         if account in self.controller.players() and not messagebox.askokcancel(
                 'Player online',
@@ -612,18 +655,15 @@ class MainWindow:
             return
         db, needs_close = self.controller.open_database()
         try:
-            blob = db.get_snapshot(account, snap)
-            if not blob:
-                messagebox.showerror('Activate failed',
-                                     'That save could not be read.')
-                return
             db.set_playerdata(account, savegame.DEFAULT_FORM, blob,
                               modded=False)
         finally:
             if needs_close:
                 db.close()
         self.lbl_sg.configure(
-            text=f'"{snap}" is now the active character for {account}.')
+            text=f'"{snap}" activated - {account} starts a new character '
+                 'next time they play.' if fresh else
+                 f'"{snap}" is now the active character for {account}.')
         self._sg_load()
         self.refresh_accounts()
 
@@ -679,6 +719,10 @@ class MainWindow:
             if needs_close:
                 db.close()
         if not blob:
+            messagebox.showinfo(
+                'Nothing to export',
+                f'"{snap}" is an empty savegame (a fresh-character slot).'
+                if blob == b'' else 'That save could not be read.')
             return
         path = filedialog.asksaveasfilename(
             title=f'Export save "{snap}"', defaultextension='.bin',
