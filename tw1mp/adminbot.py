@@ -296,8 +296,14 @@ class AdminBot:
         return handler(self)
 
     def _say(self, text):
-        """Send one chat line (quotes stripped - they delimit the command)."""
-        self._cmd('/send "{}"'.format(str(text).replace('"', "'")))
+        """Send one chat line (quotes stripped - they delimit the command).
+
+        Prepends the configured colour code so the bot's lines stand out; the
+        game renders <0xAARRGGBB> markup in chat.
+        """
+        line = str(text).replace('"', "'")
+        color = getattr(self.cfg, 'bot_color', '') or ''
+        self._cmd(f'/send "{color}{line}"')
 
     def _say_lines(self, lines):
         for line in lines:

@@ -69,6 +69,8 @@ _SETTINGS_SPEC = [
         ('Server', 'bot_website', 'Website the bot advertises', 'str'),
         ('Server', 'bot_discord', 'Discord invite (empty = not announced)',
          'str'),
+        ('Server', 'bot_color', 'Bot chat colour <0xAARRGGBB> (empty = none)',
+         'str'),
     ]),
     ('Network  (takes effect after a restart)', [
         ('Server', 'bind', 'Bind address (empty = all interfaces)', 'str'),

@@ -46,6 +46,9 @@ DEFAULTS = {
         # until there is an invite; the bot then says so instead of lying.
         'bot_website': 'https://twmp.alchemy-fox.de/',
         'bot_discord': '',
+        # Colour the bot's chat lines. Two Worlds text markup is <0xAARRGGBB>.
+        # Default is a warm gold so admin messages stand out. Empty = no colour.
+        'bot_color': '<0xFFFFC83C>',
     },
     'Panel': {
         # The desktop panel opens in this mode. 'client' hides everything that
@@ -169,6 +172,7 @@ class Config:
         self.bot_password = srv.get('bot_password')
         self.bot_website = srv.get('bot_website')
         self.bot_discord = srv.get('bot_discord')
+        self.bot_color = srv.get('bot_color')
         panel = cfg['Panel'] if 'Panel' in cfg else {}
         self.panel_mode = (panel.get('mode') or 'client').strip().lower()
         if self.panel_mode not in ('client', 'server'):
