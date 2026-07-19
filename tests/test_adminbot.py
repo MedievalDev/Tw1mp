@@ -101,6 +101,31 @@ class TestAdminBot(unittest.TestCase):
                    if line.startswith(b'/send "%s"' % BOT.encode())]
         self.assertEqual(replies, [])
 
+    def test_bot_becomes_visible_once_herodata_is_known(self):
+        """A user with no herodata is drawn for nobody (getGCUmsg is empty),
+        so the bot has to replay a captured appearance blob."""
+        bot = self.server.state.activeUsers[BOT].user
+        self.assertEqual(bot.getGCUmsg(), b'', 'bot should start invisible')
+
+        cli = self._join()
+        hero = b'\xDE\xAD\xBE\xEF' * 40
+        cli.send_cmd(f'/setuserherodata "alice" "{len(hero)}"', blob=hero)
+        self.assertTrue(self._wait(
+            lambda: self.server.load_herodata_sample()[0] != b''),
+            'server never captured a herodata sample')
+
+        blob, posdata = self.server.load_herodata_sample()
+        self.assertEqual(blob, hero)
+        self.assertEqual(posdata, '1000#2000')   # the position _join used
+
+        # the bot picks the sample up on its next town join
+        self.assertTrue(self._wait(
+            lambda: self.server.state.activeUsers[BOT].user.herodata != b'',
+            timeout=20), 'bot never sent its herodata')
+        bot = self.server.state.activeUsers[BOT].user
+        self.assertEqual(bot.herodata, hero)
+        self.assertNotEqual(bot.getGCUmsg(), b'', 'bot still invisible')
+
     def test_bot_does_not_count_as_company(self):
         """A lone player must still count as alone, so the modified-character
         rule keeps working while the bot is connected."""

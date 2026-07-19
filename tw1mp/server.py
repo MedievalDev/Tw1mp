@@ -1,6 +1,7 @@
 """TCP lobby server core."""
 
 import logging
+import os
 import signal
 import socketserver
 import struct
@@ -322,6 +323,45 @@ class CoreServer(socketserver.ThreadingTCPServer):
     def getPlayer(self, username):
         with self.state.lock:
             return self.state.activeUsers.get(username)
+
+    # A player is only drawn for others once the server has their herodata
+    # blob, so the admin bot replays a captured one. Stored next to the
+    # player data; the first real login seeds it.
+    def _herodata_sample_path(self):
+        return os.path.join(self.config.playerdata_path, 'herodata_sample.bin')
+
+    def save_herodata_sample(self, blob, posdata=None):
+        """Remember one real herodata blob (and the position it came with)."""
+        path = self._herodata_sample_path()
+        if os.path.exists(path):
+            return
+        try:
+            os.makedirs(self.config.playerdata_path, exist_ok=True)
+            with open(path, 'wb') as f:
+                f.write(blob)
+            if posdata:
+                with open(path + '.pos', 'w') as f:
+                    f.write(str(posdata))
+            log.info('Captured a herodata sample (%d bytes) for the admin bot',
+                     len(blob))
+        except OSError:
+            log.exception('Could not store the herodata sample')
+
+    def load_herodata_sample(self):
+        """Return (blob, posdata) or (b'', None) if nothing captured yet."""
+        path = self._herodata_sample_path()
+        try:
+            with open(path, 'rb') as f:
+                blob = f.read()
+        except OSError:
+            return b'', None
+        posdata = None
+        try:
+            with open(path + '.pos') as f:
+                posdata = f.read().strip() or None
+        except OSError:
+            pass
+        return blob, posdata
 
     def broadcast(self, text):
         """Send a system message to every logged-in player. Returns the

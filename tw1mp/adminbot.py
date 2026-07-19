@@ -43,6 +43,7 @@ _TICK_S = 1.0           # socket read timeout == housekeeping interval
 _NOP_TICKS = 20         # keepalive interval, in ticks
 _JOIN_COOLDOWN_S = 5.0  # minimum gap between channel-join attempts
 _MAX_BUF = 1 << 20      # drop unparsed binary (herodata) rather than grow
+_FALLBACK_POS = '1000#2000'   # used until a real position has been captured
 
 _RE_SEND = re.compile(r'^/send\s+"([^"]*)"\s+"(.*)"$')
 
@@ -291,7 +292,20 @@ class AdminBot:
         if now - self._last_join < _JOIN_COOLDOWN_S:
             return       # a join is still in flight, or the last one failed
         self._last_join = now
+        blob, posdata = self.server.load_herodata_sample()
         self._cmd('/leavegamechannel "1"')
         self._cmd(f'/requestjoingamechannel "{target}"')
-        self._cmd(f'/joingamechannel "{target}" "1000#2000"')
-        log.info('Admin bot moving to %s', target)
+        self._cmd(f'/joingamechannel "{target}" "{posdata or _FALLBACK_POS}"')
+        # Without herodata the server sends no $gamechanneluser for us and we
+        # are invisible to everyone (chat still works). Replay a captured blob.
+        self._send_herodata(blob)
+        log.info('Admin bot moving to %s%s', target,
+                 '' if blob else ' (no herodata sample yet - invisible)')
+
+    def _send_herodata(self, blob):
+        """Announce our character appearance so other players can see us."""
+        if not blob:
+            return
+        header = f'/setuserherodata "{self.name}" "{len(blob)}"'.encode(
+            'latin-1', 'replace') + b'\0'
+        self.sock.sendall(header + blob)

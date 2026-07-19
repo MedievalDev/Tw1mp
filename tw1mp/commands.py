@@ -206,10 +206,16 @@ class CommandParser:
         pd = con.readBlob(_arg(res, 2, '0'))
         with self.server.state.lock:
             con.user.herodata = pd
+            posdata = con.user.posdata
             if con.user.gamechannel:
                 msg = con.user.getGCUmsg()
                 tg = _without(con.user.gamechannel.userlist, con)
                 self.server.dist.add({'target': tg, 'message': msg})
+        # Keep one real blob on disk. A user without herodata is invisible to
+        # everyone (getGCUmsg returns nothing), so the admin bot needs a
+        # genuine sample to appear as a character rather than a ghost.
+        if pd:
+            self.server.save_herodata_sample(pd, posdata)
         return None
 
     # -- games ----------------------------------------------------------
