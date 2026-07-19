@@ -253,6 +253,7 @@ class MainWindow:
         notebook.pack(fill='both', expand=True, padx=10, pady=(0, 10))
         notebook.add(self._build_server_tab(notebook), text='Server')
         notebook.add(self._build_saves_tab(notebook), text='Characters')
+        notebook.add(self._build_savegames_tab(notebook), text='Savegames')
         notebook.add(self._build_settings_tab(notebook), text='Settings')
 
     def _build_server_tab(self, parent):
@@ -456,6 +457,273 @@ class MainWindow:
                    command=self.unban_selected).pack(side='right', padx=(6, 0))
         self.refresh_bans()
         return frame
+
+    def _build_savegames_tab(self, parent):
+        frame = ttk.Frame(parent, padding=8)
+
+        top = ttk.Frame(frame)
+        top.pack(fill='x')
+        ttk.Label(top, text='Account:').pack(side='left')
+        self.cmb_sg_account = ttk.Combobox(top, width=28, state='readonly')
+        self.cmb_sg_account.pack(side='left', padx=(4, 12))
+        self.cmb_sg_account.bind('<<ComboboxSelected>>',
+                                 lambda ev: self._sg_load())
+        ttk.Button(top, text='Refresh',
+                   command=self.refresh_savegames).pack(side='right')
+
+        self.lbl_sg_active = ttk.Label(frame, text='', foreground=_COL_OFF)
+        self.lbl_sg_active.pack(anchor='w', pady=(6, 2))
+
+        ttk.Label(frame, text='Saved characters (pick one and activate it '
+                  'before you play)').pack(anchor='w')
+        self.tree_sg = ttk.Treeview(
+            frame, columns=('size', 'saved'), show='tree headings',
+            height=9, selectmode='browse')
+        self.tree_sg.heading('#0', text='Name')
+        self.tree_sg.heading('size', text='Size')
+        self.tree_sg.heading('saved', text='Saved')
+        self.tree_sg.column('#0', width=240)
+        self.tree_sg.column('size', width=120, anchor='e')
+        self.tree_sg.column('saved', width=160, anchor='center')
+        self.tree_sg.pack(fill='both', expand=True, pady=(2, 8))
+        self.tree_sg.bind('<Double-1>', lambda ev: self.sg_activate())
+
+        btns = ttk.Frame(frame)
+        btns.pack(fill='x')
+        ttk.Button(btns, text='Activate selected',
+                   command=self.sg_activate).pack(side='left')
+        ttk.Button(btns, text='Save current as...',
+                   command=self.sg_save_current).pack(side='left', padx=6)
+        ttk.Button(btns, text='Rename...',
+                   command=self.sg_rename).pack(side='left')
+        ttk.Button(btns, text='Delete',
+                   command=self.sg_delete).pack(side='left', padx=6)
+        ttk.Button(btns, text='Export...',
+                   command=self.sg_export).pack(side='left')
+        ttk.Button(btns, text='Import as snapshot...',
+                   command=self.sg_import).pack(side='left', padx=6)
+
+        self.lbl_sg = ttk.Label(frame, text='', wraplength=820,
+                                justify='left', foreground=_COL_OK)
+        self.lbl_sg.pack(anchor='w', pady=(8, 0))
+
+        self.refresh_savegames()
+        return frame
+
+    # -- savegame slots -------------------------------------------------
+
+    def _sg_account(self):
+        return self.cmb_sg_account.get() or None
+
+    def refresh_savegames(self):
+        db, needs_close = self.controller.open_database()
+        try:
+            accounts = [name for name, _ in db.list_users()]
+        except Exception:
+            accounts = []
+        finally:
+            if needs_close:
+                db.close()
+        current = self.cmb_sg_account.get()
+        self.cmb_sg_account['values'] = accounts
+        if accounts:
+            if current in accounts:
+                self.cmb_sg_account.set(current)
+            else:
+                self.cmb_sg_account.current(0)
+        else:
+            self.cmb_sg_account.set('')
+        self._sg_load()
+
+    def _sg_load(self):
+        for row in self.tree_sg.get_children():
+            self.tree_sg.delete(row)
+        account = self._sg_account()
+        if not account:
+            self.lbl_sg_active.configure(text='No local accounts yet.')
+            return
+        db, needs_close = self.controller.open_database()
+        try:
+            blob = db.get_playerdata(account, savegame.DEFAULT_FORM)
+            if blob:
+                size = f'{len(blob):,} bytes'.replace(',', ' ')
+                stamp = self._playerdata_mtime(db, account)
+                self.lbl_sg_active.configure(
+                    text=f'Active character: {size}   (last change {stamp})')
+            else:
+                self.lbl_sg_active.configure(
+                    text='Active character: none stored yet.')
+            for snapname, sz, mtime in db.list_snapshots(account):
+                self.tree_sg.insert(
+                    '', 'end', text=snapname,
+                    values=(f'{sz:,} bytes'.replace(',', ' '),
+                            _fmt_stamp(datetime.datetime.fromtimestamp(mtime))))
+        except Exception:
+            log.exception('Could not load snapshots')
+        finally:
+            if needs_close:
+                db.close()
+
+    def _sg_selected(self):
+        sel = self.tree_sg.selection()
+        return self.tree_sg.item(sel[0], 'text') if sel else None
+
+    def sg_save_current(self):
+        account = self._sg_account()
+        if not account:
+            return
+        name = simpledialog.askstring(
+            'Save current character',
+            'Name for this save slot:', parent=self.root)
+        if not name:
+            return
+        db, needs_close = self.controller.open_database()
+        try:
+            blob = db.get_playerdata(account, savegame.DEFAULT_FORM)
+            if not blob:
+                messagebox.showinfo('Nothing to save',
+                                    f'{account} has no active character yet.')
+                return
+            ok = db.save_snapshot(account, name, blob)
+        finally:
+            if needs_close:
+                db.close()
+        self.lbl_sg.configure(text=f'Saved current character as "{name}".'
+                              if ok else 'Could not save (invalid name?).')
+        self._sg_load()
+
+    def sg_activate(self):
+        account = self._sg_account()
+        snap = self._sg_selected()
+        if not account or not snap:
+            messagebox.showinfo('No save selected',
+                                'Pick a saved character to activate.')
+            return
+        if not messagebox.askokcancel(
+                'Activate save',
+                f'Make "{snap}" the active character for {account}?\n\n'
+                'This replaces the current active character. Save the current '
+                'one first (Save current as...) if you want to keep it.'):
+            return
+        if account in self.controller.players() and not messagebox.askokcancel(
+                'Player online',
+                f'{account} is connected right now. Switching now may be '
+                'overwritten on their next in-game save. Continue?'):
+            return
+        db, needs_close = self.controller.open_database()
+        try:
+            blob = db.get_snapshot(account, snap)
+            if not blob:
+                messagebox.showerror('Activate failed',
+                                     'That save could not be read.')
+                return
+            db.set_playerdata(account, savegame.DEFAULT_FORM, blob,
+                              modded=False)
+        finally:
+            if needs_close:
+                db.close()
+        self.lbl_sg.configure(
+            text=f'"{snap}" is now the active character for {account}.')
+        self._sg_load()
+        self.refresh_accounts()
+
+    def sg_rename(self):
+        account = self._sg_account()
+        snap = self._sg_selected()
+        if not account or not snap:
+            return
+        newname = simpledialog.askstring(
+            'Rename save', f'New name for "{snap}":',
+            parent=self.root, initialvalue=snap)
+        if not newname or newname == snap:
+            return
+        db, needs_close = self.controller.open_database()
+        try:
+            ok = db.rename_snapshot(account, snap, newname)
+        finally:
+            if needs_close:
+                db.close()
+        if not ok:
+            messagebox.showerror('Rename failed',
+                                 'Invalid or already-used name.')
+        self._sg_load()
+
+    def sg_delete(self):
+        account = self._sg_account()
+        snap = self._sg_selected()
+        if not account or not snap:
+            return
+        if not messagebox.askokcancel(
+                'Delete save', f'Delete the saved character "{snap}"?'):
+            return
+        db, needs_close = self.controller.open_database()
+        try:
+            db.delete_snapshot(account, snap)
+        finally:
+            if needs_close:
+                db.close()
+        self.lbl_sg.configure(text=f'Deleted save "{snap}".')
+        self._sg_load()
+
+    def sg_export(self):
+        account = self._sg_account()
+        snap = self._sg_selected()
+        if not account or not snap:
+            messagebox.showinfo('No save selected',
+                                'Pick a saved character to export.')
+            return
+        db, needs_close = self.controller.open_database()
+        try:
+            blob = db.get_snapshot(account, snap)
+        finally:
+            if needs_close:
+                db.close()
+        if not blob:
+            return
+        path = filedialog.asksaveasfilename(
+            title=f'Export save "{snap}"', defaultextension='.bin',
+            initialfile=f'{account}_{snap}.bin',
+            filetypes=[('Character data', '*.bin')])
+        if not path:
+            return
+        try:
+            with open(path, 'wb') as f:
+                f.write(blob)
+        except OSError as exc:
+            messagebox.showerror('Export failed', str(exc))
+            return
+        self.lbl_sg.configure(text=f'Exported "{snap}" to {path}.')
+
+    def sg_import(self):
+        account = self._sg_account()
+        if not account:
+            return
+        path = filedialog.askopenfilename(
+            title=f'Import a save for {account}',
+            filetypes=[('Character data', '*.bin'), ('All files', '*.*')])
+        if not path:
+            return
+        name = simpledialog.askstring(
+            'Import save', 'Name for the imported save slot:',
+            parent=self.root,
+            initialvalue=os.path.splitext(os.path.basename(path))[0])
+        if not name:
+            return
+        try:
+            with open(path, 'rb') as f:
+                blob = f.read()
+        except OSError as exc:
+            messagebox.showerror('Import failed', str(exc))
+            return
+        db, needs_close = self.controller.open_database()
+        try:
+            ok = db.save_snapshot(account, name, blob)
+        finally:
+            if needs_close:
+                db.close()
+        self.lbl_sg.configure(text=f'Imported {len(blob)} bytes as "{name}".'
+                              if ok else 'Could not import (invalid name?).')
+        self._sg_load()
 
     def _build_settings_tab(self, parent):
         outer = ttk.Frame(parent, padding=8)

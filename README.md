@@ -46,6 +46,9 @@ protocol documentation by [buglord](https://github.com/buglord):
     (read-only cheat check), edit items, delete character or account, ban;
     download an account from a live server (e.g. the official one) and import
     it locally
+  * **Savegames** tab — multiple named save slots per account; pick one and
+    activate it before you play, save the current character as a new slot,
+    rename/delete/export/import
   * broadcast a message to all connected players, and right-click a player to
     kick or ban
 * Test suite with a simulated game client covering the whole protocol

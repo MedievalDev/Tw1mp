@@ -71,6 +71,12 @@ def _serial_hex(serial):
     return str(serial)
 
 
+def _safe_snap(snapname):
+    """Sanitise a snapshot name into a filesystem-safe base name."""
+    return ''.join(c for c in str(snapname)
+                   if c.isalnum() or c in ' -_').strip()
+
+
 def _salt_hash(password, salt, iterations):
     return hashlib.pbkdf2_hmac('sha256', password.encode('latin-1', 'replace'),
                                salt, iterations)
@@ -184,6 +190,94 @@ class Database:
             except OSError:
                 log.exception('Failed deleting modded playerdata for %s', name)
                 return False
+
+    # -- character snapshots (save slots) -----------------------------
+
+    def _snapshot_dir(self, name, create=False):
+        with self.lock:
+            cur = self.db.cursor()
+            try:
+                row = cur.execute(_SQL_userID, (name,)).fetchone()
+            finally:
+                cur.close()
+        if row is None:
+            return None
+        path = os.path.join(self.cfg.playerdata_path, 'snapshots',
+                            str(row[0]))
+        if create:
+            os.makedirs(path, exist_ok=True)
+        return path
+
+    def list_snapshots(self, name):
+        """Saved character slots as [(snapname, size, mtime), ...]."""
+        folder = self._snapshot_dir(name)
+        result = []
+        if folder and os.path.isdir(folder):
+            for fn in os.listdir(folder):
+                if fn.endswith('.bin'):
+                    fpath = os.path.join(folder, fn)
+                    try:
+                        result.append((fn[:-4], os.path.getsize(fpath),
+                                       os.path.getmtime(fpath)))
+                    except OSError:
+                        pass
+        result.sort(key=lambda r: r[0].lower())
+        return result
+
+    def save_snapshot(self, name, snapname, data):
+        safe = _safe_snap(snapname)
+        if not safe:
+            return False
+        folder = self._snapshot_dir(name, create=True)
+        if not folder:
+            return False
+        with self.lock:
+            try:
+                with open(os.path.join(folder, safe + '.bin'), 'wb') as f:
+                    f.write(data)
+                return True
+            except OSError:
+                log.exception('Failed writing snapshot for %s', name)
+                return False
+
+    def get_snapshot(self, name, snapname):
+        folder = self._snapshot_dir(name)
+        if not folder:
+            return b''
+        fpath = os.path.join(folder, _safe_snap(snapname) + '.bin')
+        try:
+            with open(fpath, 'rb') as f:
+                return f.read()
+        except OSError:
+            return b''
+
+    def delete_snapshot(self, name, snapname):
+        folder = self._snapshot_dir(name)
+        if not folder:
+            return False
+        fpath = os.path.join(folder, _safe_snap(snapname) + '.bin')
+        try:
+            os.remove(fpath)
+            return True
+        except OSError:
+            return False
+
+    def rename_snapshot(self, name, snapname, newname):
+        folder = self._snapshot_dir(name)
+        if not folder:
+            return False
+        safe_new = _safe_snap(newname)
+        if not safe_new:
+            return False
+        src = os.path.join(folder, _safe_snap(snapname) + '.bin')
+        dst = os.path.join(folder, safe_new + '.bin')
+        if os.path.exists(dst):
+            return False
+        try:
+            os.replace(src, dst)
+            return True
+        except OSError:
+            return False
 
     # -- accounts -----------------------------------------------------
 
