@@ -13,6 +13,7 @@ import datetime
 import logging
 import os
 import queue
+import socket
 import threading
 import time
 import tkinter as tk
@@ -71,6 +72,35 @@ _SETTINGS_SPEC = [
         ('Web', 'debug_api', 'Debug API', 'bool'),
     ]),
 ]
+
+
+_ip_cache = (0.0, '')
+
+
+def local_ip():
+    """LAN IPv4 other players have to enter to reach this server.
+
+    Asks the routing table which interface would be used to leave the
+    machine (no packets are sent for a UDP connect), so a host with several
+    adapters reports the real LAN address instead of some virtual one.
+    Cached briefly because the status bar refreshes every second.
+    """
+    global _ip_cache
+    now = time.monotonic()
+    if _ip_cache[1] and now - _ip_cache[0] < 10:
+        return _ip_cache[1]
+    ip = ''
+    try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            probe.connect(('8.8.8.8', 80))
+            ip = probe.getsockname()[0]
+        finally:
+            probe.close()
+    except OSError:
+        pass  # offline: fall back to showing nothing
+    _ip_cache = (now, ip)
+    return ip
 
 
 def _make_item_tree(parent):
@@ -1362,10 +1392,12 @@ class MainWindow:
         self.btn_toggle.configure(
             text='Stop server' if running else 'Start server')
         if running:
-            port = self.controller.server.config.port
+            config = self.controller.server.config
+            # bind='' means all interfaces, so show the address players use
+            address = config.bind or local_ip() or 'this machine'
             count = len(players)
             self.lbl_info.configure(
-                text=f'Port {port}   |   {count} '
+                text=f'{address}:{config.port}   |   {count} '
                      f'{"player" if count == 1 else "players"}   |   '
                      f'uptime {self.controller.uptime()}')
         else:
