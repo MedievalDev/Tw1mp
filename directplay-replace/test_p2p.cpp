@@ -13,11 +13,19 @@
 #include <string>
 
 typedef HRESULT (WINAPI *PFN_DllGetClassObject)(REFCLSID, REFIID, LPVOID*);
+typedef void (*PFN_DpnTestSetDrop)(int);
 
 static volatile LONG g_hostGotPeer = 0;     // host saw CREATE_PLAYER for joiner (dpnid 2)
 static volatile LONG g_joinConnected = 0;   // joiner got CONNECT_COMPLETE
 static volatile LONG g_hostRecv = 0, g_joinRecv = 0;
 static char g_hostMsg[256] = {0}, g_joinMsg[256] = {0};
+
+// Reliability phase: host sends RELIABLE_N guaranteed messages "R<seq>" under
+// simulated packet loss; the joiner must receive all of them exactly once and
+// strictly in order.
+#define RELIABLE_N 50
+static volatile LONG g_relCount = 0;        // how many reliable msgs received in order
+static volatile LONG g_relOutOfOrder = 0;   // set if a seq arrives out of order/dup
 
 static HRESULT WINAPI HostHandler(PVOID, DWORD id, PVOID msg) {
     if (id == DPN_MSGID_CREATE_PLAYER) {
@@ -47,6 +55,16 @@ static HRESULT WINAPI JoinHandler(PVOID, DWORD id, PVOID msg) {
         printf("[JOIN] CREATE_PLAYER dpnid=%lu\n", m->dpnidPlayer);
     } else if (id == DPN_MSGID_RECEIVE) {
         DPNMSG_RECEIVE* m = (DPNMSG_RECEIVE*)msg;
+        if (m->dwReceiveDataSize > 0 && ((char*)m->pReceiveData)[0] == 'R') {
+            // Reliability-phase payload "R<seq>": must arrive in order, once.
+            char tmp[32] = {0};
+            DWORD n = m->dwReceiveDataSize < sizeof(tmp) - 1 ? m->dwReceiveDataSize : sizeof(tmp) - 1;
+            memcpy(tmp, m->pReceiveData, n);
+            int seq = atoi(tmp + 1);
+            if (seq == g_relCount) InterlockedIncrement(&g_relCount);
+            else InterlockedExchange(&g_relOutOfOrder, 1);
+            return S_OK;
+        }
         printf("[JOIN] RECEIVE from %lu: %.*s\n", m->dpnidSender,
                m->dwReceiveDataSize, (char*)m->pReceiveData);
         if (m->dpnidSender == 1) { // from the host
@@ -116,10 +134,36 @@ int main() {
     printf("   host received from joiner: '%s'\n", g_hostMsg);
     printf("   joiner received from host: '%s'\n", g_joinMsg);
 
+    // --- Reliability under packet loss ---
+    // Inject 30% outgoing DATA/DATA_ACK loss, then fire RELIABLE_N guaranteed
+    // messages host->joiner. All must arrive exactly once, in order.
+    PFN_DpnTestSetDrop setDrop = (PFN_DpnTestSetDrop)GetProcAddress(dll, "DpnTestSetDrop");
+    bool rel = false;
+    if (!setDrop) {
+        printf("\n== reliability: SKIPPED (DpnTestSetDrop not exported) ==\n");
+        rel = true; // don't fail the run if the hook is absent
+    } else {
+        setDrop(30);
+        for (int i = 0; i < RELIABLE_N; ++i) {
+            char pay[16]; int pl = snprintf(pay, sizeof(pay), "R%d", i);
+            DPN_BUFFER_DESC b{}; b.dwBufferSize = (DWORD)pl; b.pBufferData = (BYTE*)pay;
+            DPNHANDLE sr = 0;
+            host->SendTo(DPNID_ALL_PLAYERS_GROUP, &b, 1, 0, NULL, &sr, DPNSEND_GUARANTEED);
+        }
+        // Retransmit at 150ms RTO; give generous time for 30% loss over 50 msgs.
+        for (int i = 0; i < 300 && g_relCount < RELIABLE_N; ++i) Sleep(20);
+        setDrop(0);
+        rel = (g_relCount == RELIABLE_N) && !g_relOutOfOrder;
+        printf("\n== reliability: %s ==\n", rel ? "OK" : "FAILED");
+        printf("   in-order received: %ld/%d, out-of-order/dup: %ld\n",
+               g_relCount, RELIABLE_N, g_relOutOfOrder);
+    }
+
     host->Close(0); join->Close(0);
     for (DWORD i = 0; i < na; ++i) if (addrs[i]) addrs[i]->Release();
     host->Release(); join->Release();
 
-    printf("\n=== RESULT: %s ===\n", (ok && got) ? "PASS" : "FAIL");
-    return (ok && got) ? 0 : 2;
+    bool pass = ok && got && rel;
+    printf("\n=== RESULT: %s ===\n", pass ? "PASS" : "FAIL");
+    return pass ? 0 : 2;
 }

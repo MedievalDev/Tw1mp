@@ -38,13 +38,37 @@
 struct WirePkt { DWORD magic; BYTE type; };  // magic 'TWDP'
 #pragma pack(pop)
 static const DWORD WIRE_MAGIC = 0x50445754;  // 'TWDP' little-endian
-enum { PKT_CONNECT = 1, PKT_ACK = 2, PKT_DATA = 3, PKT_BYE = 4 };
+enum { PKT_CONNECT = 1, PKT_ACK = 2, PKT_DATA = 3, PKT_BYE = 4, PKT_DATA_ACK = 5 };
+// Reliable-send tuning.
+static const DWORD RELIABLE_RTO_MS = 150;   // resend if unacked this long
+static const DWORD RELIABLE_MAX_RETRIES = 40; // ~6s before giving up
+
+static std::string ToUtf8(const std::wstring& w) {
+    if (w.empty()) return std::string();
+    int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), NULL, 0, NULL, NULL);
+    std::string s(n, 0);
+    WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), &s[0], n, NULL, NULL);
+    return s;
+}
+static std::wstring FromUtf8(const char* p, int len) {
+    if (len <= 0) return std::wstring();
+    int n = MultiByteToWideChar(CP_UTF8, 0, p, len, NULL, 0);
+    std::wstring w(n, 0);
+    MultiByteToWideChar(CP_UTF8, 0, p, len, &w[0], n);
+    return w;
+}
 
 static CRITICAL_SECTION g_logLock;
 static bool g_logReady = false;
 static LONG g_objects = 0;
 static HMODULE g_hModule = NULL;
 static char g_logPath[MAX_PATH] = {0};
+
+// Test-only packet-loss injection: set the DPNET_DROP env var to a percent
+// (0-100) to randomly drop outgoing DATA/DATA_ACK packets and exercise the
+// reliable-send retransmit path. Off (0) in normal use.
+static int g_dropPct = 0;
+static bool DropRoll() { return g_dropPct > 0 && (rand() % 100) < g_dropPct; }
 
 static void LogInit() {
     if (!g_logReady) { InitializeCriticalSection(&g_logLock); g_logReady = true; }
@@ -282,7 +306,11 @@ private:
 
 class ReplPeer : public IDirectPlay8Peer {
 public:
-    ReplPeer() : m_ref(1) { InterlockedIncrement(&g_objects); InitializeCriticalSection(&m_lock); }
+    ReplPeer() : m_ref(1) {
+        InterlockedIncrement(&g_objects);
+        InitializeCriticalSection(&m_lock);
+        InitializeCriticalSection(&m_relLock);
+    }
     ~ReplPeer() {
         // Always tear down the threads before freeing the state they touch,
         // even if the game Released without calling Close() (abort paths).
@@ -291,6 +319,7 @@ public:
         StopWorker();
         for (auto& kv : m_kept) free(kv.second);
         m_kept.clear();
+        DeleteCriticalSection(&m_relLock);
         DeleteCriticalSection(&m_lock);
     }
 
@@ -435,9 +464,11 @@ public:
 
         // If a peer is connected and the target is the peer or the whole
         // session, ship the payload over UDP; it arrives there as RECEIVE.
+        // Guaranteed sends go reliable (seq + ack + retransmit).
         bool toPeer = hasPeer &&
                       (dpnid == remoteId || dpnid == DPNID_ALL_PLAYERS_GROUP);
-        if (toPeer) SendWire(PKT_DATA, localId, data.data(), (DWORD)data.size());
+        if (toPeer) SendDataToPeer((dwFlags & DPNSEND_GUARANTEED) != 0,
+                                   localId, data.data(), (DWORD)data.size());
 
         if (async) {
             Job sc; sc.type = Job::SEND_COMPLETE; sc.handle = h; sc.context = pvAsyncContext;
@@ -503,7 +534,8 @@ public:
         m_connectHandle = h; m_connectContext = pvAsyncContext;
         if (phAsyncHandle) *phAsyncHandle = h;
         StartNet();
-        SendWire(PKT_CONNECT, 0, NULL, 0);   // knock on the host
+        std::string nm = ToUtf8(m_playerName);   // introduce ourselves
+        SendWire(PKT_CONNECT, 0, nm.data(), (DWORD)nm.size());
         Log("Peer::Connect -> %s:%u", host.c_str(), port);
         return DPNSUCCESS_PENDING;
     }
@@ -586,6 +618,65 @@ private:
                (sockaddr*)&m_peerAddr, sizeof(m_peerAddr));
     }
 
+    // DATA packet: WirePkt + DPNID sender + BYTE reliable + DWORD seq + payload.
+    // Reliable packets get a sequence and are kept for retransmit until acked.
+    void SendDataToPeer(bool reliable, DPNID sender, const BYTE* payload, DWORD len) {
+        if (m_sock == INVALID_SOCKET) return;
+        const size_t hdr = sizeof(WirePkt) + sizeof(DPNID) + 1 + sizeof(DWORD);
+        std::vector<BYTE> pkt(hdr + len);
+        WirePkt* h = (WirePkt*)pkt.data(); h->magic = WIRE_MAGIC; h->type = PKT_DATA;
+        size_t off = sizeof(WirePkt);
+        memcpy(pkt.data() + off, &sender, sizeof(DPNID)); off += sizeof(DPNID);
+        pkt[off] = reliable ? 1 : 0; off += 1;
+        size_t seqOff = off; off += sizeof(DWORD);
+        if (len) memcpy(pkt.data() + off, payload, len);
+        if (reliable) {
+            EnterCriticalSection(&m_relLock);
+            DWORD seq = m_rSeqOut++;
+            memcpy(pkt.data() + seqOff, &seq, sizeof(DWORD));
+            Unacked u; u.pkt = pkt; u.lastSend = GetTickCount(); u.retries = 0;
+            m_unacked[seq] = std::move(u);
+            LeaveCriticalSection(&m_relLock);
+        } else {
+            memset(pkt.data() + seqOff, 0, sizeof(DWORD));
+        }
+        if (!DropRoll())
+            sendto(m_sock, (char*)pkt.data(), (int)pkt.size(), 0,
+                   (sockaddr*)&m_peerAddr, sizeof(m_peerAddr));
+    }
+
+    void SendAck(DWORD seq) {
+        if (m_sock == INVALID_SOCKET) return;
+        BYTE buf[sizeof(WirePkt) + sizeof(DPNID) + sizeof(DWORD)];
+        WirePkt* h = (WirePkt*)buf; h->magic = WIRE_MAGIC; h->type = PKT_DATA_ACK;
+        DPNID s = m_localDpnid;
+        memcpy(buf + sizeof(WirePkt), &s, sizeof(DPNID));
+        memcpy(buf + sizeof(WirePkt) + sizeof(DPNID), &seq, sizeof(DWORD));
+        if (!DropRoll())
+            sendto(m_sock, (char*)buf, sizeof(buf), 0, (sockaddr*)&m_peerAddr, sizeof(m_peerAddr));
+    }
+
+    // Resend reliable packets whose ack is overdue. Runs on the net thread.
+    void RetransmitTick() {
+        if (m_sock == INVALID_SOCKET) return;
+        DWORD now = GetTickCount();
+        std::vector<std::vector<BYTE>> resend;
+        EnterCriticalSection(&m_relLock);
+        for (auto it = m_unacked.begin(); it != m_unacked.end(); ) {
+            if (now - it->second.lastSend >= RELIABLE_RTO_MS) {
+                if (++it->second.retries > RELIABLE_MAX_RETRIES) { it = m_unacked.erase(it); continue; }
+                it->second.lastSend = now;
+                resend.push_back(it->second.pkt);
+            }
+            ++it;
+        }
+        LeaveCriticalSection(&m_relLock);
+        for (auto& p : resend)
+            if (!DropRoll())
+                sendto(m_sock, (char*)p.data(), (int)p.size(), 0,
+                       (sockaddr*)&m_peerAddr, sizeof(m_peerAddr));
+    }
+
     void StartNet() {
         if (m_sock == INVALID_SOCKET) return;   // no socket -> no net thread
         m_netStop = false;
@@ -613,6 +704,7 @@ private:
             sockaddr_in from{}; int fl = sizeof(from);
             int n = recvfrom(m_sock, (char*)buf.data(), (int)buf.size(), 0,
                              (sockaddr*)&from, &fl);
+            RetransmitTick();   // runs at least every recv timeout (~200ms)
             if (n < (int)(sizeof(WirePkt) + sizeof(DPNID))) continue;
             WirePkt* h = (WirePkt*)buf.data();
             if (h->magic != WIRE_MAGIC) continue;
@@ -630,10 +722,12 @@ private:
             EnterCriticalSection(&m_lock);
             m_peerAddr = from;
             m_remoteDpnid = 2;
+            if (len) m_peerName = FromUtf8((char*)body, (int)len);
             m_hasPeer = true;        // publish address/ids before the flag
             LeaveCriticalSection(&m_lock);
-            Log("net: joiner connected, dpnid 2");
-            SendWire(PKT_ACK, m_localDpnid, NULL, 0);   // reply carries no body; ids implied
+            Log("net: joiner '%S' connected, dpnid 2", m_peerName.c_str());
+            std::string hn = ToUtf8(m_playerName);   // reply with our name
+            SendWire(PKT_ACK, m_localDpnid, hn.data(), (DWORD)hn.size());
             Job ic; ic.type = Job::INDICATE_CONNECT; Enqueue(ic);
             Job cp; cp.type = Job::CREATE_PLAYER; cp.dpnid = 2; Enqueue(cp);
             break;
@@ -641,9 +735,11 @@ private:
         case PKT_ACK: {              // joiner side: host accepted
             if (m_isHost || m_hasPeer) break;
             EnterCriticalSection(&m_lock);
-            m_localDpnid = 2; m_remoteDpnid = 1; m_hasPeer = true;
+            m_localDpnid = 2; m_remoteDpnid = 1;
+            if (len) m_peerName = FromUtf8((char*)body, (int)len);
+            m_hasPeer = true;
             LeaveCriticalSection(&m_lock);
-            Log("net: host accepted, local dpnid 2, host dpnid 1");
+            Log("net: host '%S' accepted, local dpnid 2, host dpnid 1", m_peerName.c_str());
             Job cc; cc.type = Job::CONNECT_COMPLETE; cc.handle = m_connectHandle;
             cc.context = m_connectContext; cc.result = S_OK; Enqueue(cc);
             Job hp; hp.type = Job::CREATE_PLAYER; hp.dpnid = 1; Enqueue(hp);  // host
@@ -651,8 +747,47 @@ private:
             break;
         }
         case PKT_DATA: {
-            Job rc; rc.type = Job::RECEIVE; rc.dpnid = sender;
-            rc.data.assign(body, body + len); Enqueue(rc);
+            if (len < 1 + sizeof(DWORD)) break;
+            bool reliable = body[0] != 0;
+            DWORD seq; memcpy(&seq, body + 1, sizeof(DWORD));
+            BYTE* payload = body + 1 + sizeof(DWORD);
+            DWORD plen = len - 1 - sizeof(DWORD);
+            if (!reliable) {   // best-effort: deliver on arrival
+                Job rc; rc.type = Job::RECEIVE; rc.dpnid = sender;
+                rc.data.assign(payload, payload + plen); Enqueue(rc);
+                break;
+            }
+            SendAck(seq);      // ack every reliable packet (even duplicates)
+            // Ordered, de-duplicated delivery. Collect what to deliver under
+            // the lock, then enqueue outside it (Enqueue takes m_lock).
+            std::vector<std::vector<BYTE>> deliver;
+            EnterCriticalSection(&m_relLock);
+            if (seq == m_rSeqInExpected) {
+                deliver.emplace_back(payload, payload + plen);
+                m_rSeqInExpected++;
+                auto it = m_reorder.find(m_rSeqInExpected);
+                while (it != m_reorder.end()) {
+                    deliver.push_back(std::move(it->second));
+                    m_reorder.erase(it);
+                    m_rSeqInExpected++;
+                    it = m_reorder.find(m_rSeqInExpected);
+                }
+            } else if (seq > m_rSeqInExpected) {
+                if (!m_reorder.count(seq)) m_reorder[seq].assign(payload, payload + plen);
+            }   // seq < expected: already delivered, drop
+            LeaveCriticalSection(&m_relLock);
+            for (auto& d : deliver) {
+                Job rc; rc.type = Job::RECEIVE; rc.dpnid = sender; rc.data = std::move(d);
+                Enqueue(rc);
+            }
+            break;
+        }
+        case PKT_DATA_ACK: {
+            if (len < sizeof(DWORD)) break;
+            DWORD seq; memcpy(&seq, body, sizeof(DWORD));
+            EnterCriticalSection(&m_relLock);
+            m_unacked.erase(seq);
+            LeaveCriticalSection(&m_relLock);
             break;
         }
         case PKT_BYE: {
@@ -818,6 +953,15 @@ private:
     DPNHANDLE m_connectHandle = 0;
     void* m_connectContext = NULL;
     unsigned short m_boundPort = 0;
+
+    // reliable-send state (guarded by m_relLock)
+    struct Unacked { std::vector<BYTE> pkt; DWORD lastSend; DWORD retries; };
+    CRITICAL_SECTION m_relLock;
+    DWORD m_rSeqOut = 0;                       // next reliable seq to send
+    DWORD m_rSeqInExpected = 0;                // next reliable seq to deliver
+    std::map<DWORD, Unacked> m_unacked;        // sent, awaiting ack
+    std::map<DWORD, std::vector<BYTE>> m_reorder; // received out of order
+    DWORD m_tickMs = 0;                        // last GetTickCount for RTO
 };
 
 // ===================================================================
@@ -868,12 +1012,22 @@ STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, LPVOID* ppv) {
 
 STDAPI DllCanUnloadNow(void) { return g_objects == 0 ? S_OK : S_FALSE; }
 
+// Test-only hook: set the outgoing DATA/DATA_ACK drop percentage at runtime so
+// the self-test can toggle simulated packet loss for the reliability phase only.
+extern "C" void DpnTestSetDrop(int pct) { g_dropPct = pct; Log("DpnTestSetDrop: %d%%", pct); }
+
 BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(inst);
         g_hModule = inst;
         LogInit();
         WSADATA wsa; WSAStartup(MAKEWORD(2, 2), &wsa);
+        srand(GetTickCount());
+        char drop[16] = {0};
+        if (GetEnvironmentVariableA("DPNET_DROP", drop, sizeof(drop)) > 0) {
+            g_dropPct = atoi(drop);
+            Log("test packet-loss injection: %d%%", g_dropPct);
+        }
         Log("=== dpnetreplace geladen (pid %lu) ===", GetCurrentProcessId());
     }
     return TRUE;
