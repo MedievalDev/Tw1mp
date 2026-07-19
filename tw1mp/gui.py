@@ -21,7 +21,8 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from . import __version__, chardata, gamelang, savegame, tray
-from .config import DEFAULTS as CONFIG_DEFAULTS, Config, save_settings
+from .config import (DEFAULTS as CONFIG_DEFAULTS, Config, check_password,
+                     hash_password, save_settings)
 from .database import Database
 from .server import CoreServer
 
@@ -261,6 +262,12 @@ class MainWindow:
         self.callq = queue.Queue()
         self.busy = False
         self._quitting = False
+        # The panel opens as a client view. Admin mode is only entered through
+        # the password gate - unless no password is set and the config asks
+        # for it, which is the "single-user, my own PC" case.
+        cfg = Config(root=self.root_dir)
+        self.admin_mode = (cfg.panel_mode == 'server'
+                           and not cfg.admin_password)
 
         self.root = tk.Tk()
         self.root.title(f'TW1MP Lobby Server {__version__}')
@@ -269,6 +276,7 @@ class MainWindow:
         self.root.protocol('WM_DELETE_WINDOW', self.on_close)
 
         self._build()
+        self.apply_mode()
         self._attach_logging()
 
         self.tray = tray.TrayIcon(
@@ -314,13 +322,28 @@ class MainWindow:
         self.btn_game = ttk.Button(bar, text='Start game',
                                    command=self.start_game)
         self.btn_game.pack(side='right')
+        self.btn_files = ttk.Button(bar, text='Files ▾',
+                                    command=self.show_files_menu)
+        self.btn_files.pack(side='right', padx=6)
+        self.btn_mode = ttk.Button(bar, text='Admin…',
+                                   command=self.toggle_admin_mode)
+        self.btn_mode.pack(side='right')
 
         notebook = ttk.Notebook(self.root)
         notebook.pack(fill='both', expand=True, padx=10, pady=(0, 10))
-        notebook.add(self._build_server_tab(notebook), text='Server')
-        notebook.add(self._build_saves_tab(notebook), text='Characters')
-        notebook.add(self._build_savegames_tab(notebook), text='Savegames')
-        notebook.add(self._build_settings_tab(notebook), text='Settings')
+        self.notebook = notebook
+        # Tabs that only exist in admin mode; the client view keeps just the
+        # status/log tab so a player can see the server and launch the game.
+        self.tab_server = self._build_server_tab(notebook)
+        self.tab_saves = self._build_saves_tab(notebook)
+        self.tab_savegames = self._build_savegames_tab(notebook)
+        self.tab_settings = self._build_settings_tab(notebook)
+        notebook.add(self.tab_server, text='Server')
+        notebook.add(self.tab_saves, text='Characters')
+        notebook.add(self.tab_savegames, text='Savegames')
+        notebook.add(self.tab_settings, text='Settings')
+        self._admin_tabs = (self.tab_saves, self.tab_savegames,
+                            self.tab_settings)
 
     def _build_server_tab(self, parent):
         frame = ttk.Frame(parent, padding=8)
@@ -365,11 +388,12 @@ class MainWindow:
         bcast.pack(fill='x', pady=(6, 0))
         ttk.Label(bcast, text='Broadcast:').pack(side='left')
         self.var_bcast = tk.StringVar()
-        entry = ttk.Entry(bcast, textvariable=self.var_bcast)
-        entry.pack(side='left', fill='x', expand=True, padx=4)
-        entry.bind('<Return>', lambda ev: self.send_broadcast())
-        ttk.Button(bcast, text='Send',
-                   command=self.send_broadcast).pack(side='left')
+        self.ent_broadcast = ttk.Entry(bcast, textvariable=self.var_bcast)
+        self.ent_broadcast.pack(side='left', fill='x', expand=True, padx=4)
+        self.ent_broadcast.bind('<Return>', lambda ev: self.send_broadcast())
+        self.btn_broadcast = ttk.Button(bcast, text='Send',
+                                        command=self.send_broadcast)
+        self.btn_broadcast.pack(side='left')
         panes.add(right, weight=2)
         return frame
 
@@ -878,6 +902,29 @@ class MainWindow:
                         row=r, column=1, sticky='ew', pady=2)
                     self._setting_widgets[(section, key)] = (typ, var)
 
+        panel_box = ttk.LabelFrame(
+            body, text='Panel access  (client view is the default)', padding=8)
+        panel_box.pack(fill='x', pady=(0, 8), padx=2)
+        self.var_panel_mode = tk.StringVar(
+            value=self._read_ini().get('Panel', 'mode', fallback='client'))
+        row = ttk.Frame(panel_box)
+        row.pack(fill='x')
+        ttk.Label(row, text='Open the panel as:').pack(side='left')
+        ttk.Radiobutton(row, text='Client', value='client',
+                        variable=self.var_panel_mode,
+                        command=self._save_panel_mode).pack(side='left', padx=8)
+        ttk.Radiobutton(row, text='Server (admin)', value='server',
+                        variable=self.var_panel_mode,
+                        command=self._save_panel_mode).pack(side='left')
+        ttk.Button(panel_box, text='Set admin password…',
+                   command=self.set_admin_password).pack(anchor='w', pady=(8, 0))
+        ttk.Label(panel_box, foreground=_COL_OFF, wraplength=760,
+                  justify='left',
+                  text='Starting the server and the admin tabs need this '
+                       'password. It locks this panel only — someone with '
+                       'access to the files can still read the database '
+                       'directly.').pack(anchor='w', pady=(4, 0))
+
         bar = ttk.Frame(body)
         bar.pack(fill='x', pady=(4, 2), padx=2)
         ttk.Button(bar, text='Save', command=self.save_settings).pack(
@@ -891,6 +938,15 @@ class MainWindow:
                                       justify='left', foreground=_COL_OK)
         self.lbl_settings.pack(anchor='w', pady=(4, 0), padx=2)
         return outer
+
+    def _save_panel_mode(self):
+        try:
+            save_settings(self.controller.ini_path,
+                          panel={'mode': self.var_panel_mode.get()})
+            self.lbl_settings.configure(
+                text=f'Panel opens as "{self.var_panel_mode.get()}" next time.')
+        except OSError as exc:
+            messagebox.showerror('Could not save', str(exc))
 
     def _read_ini(self):
         cp = configparser.ConfigParser()
@@ -997,6 +1053,129 @@ class MainWindow:
             self.stop_server()
         else:
             self.start_server()
+
+    # -- panel mode (client vs admin) -----------------------------------
+
+    def _stored_admin_password(self):
+        return self._read_ini().get('Panel', 'admin_password', fallback='')
+
+    def apply_mode(self):
+        """Show or hide everything that controls or exposes the server."""
+        admin = self.admin_mode
+        for tab in self._admin_tabs:
+            if admin:
+                self.notebook.add(tab)
+            else:
+                self.notebook.hide(tab)
+        self.notebook.tab(self.tab_server,
+                          text='Server' if admin else 'Status')
+        self.btn_toggle.pack(side='right', padx=6) if admin \
+            else self.btn_toggle.pack_forget()
+        self.btn_mode.configure(text='Client view' if admin else 'Admin…')
+        # the log and the broadcast box are admin-only too
+        for widget in (getattr(self, 'txt_log', None),
+                       getattr(self, 'tree_players', None)):
+            pass  # kept visible: a player may legitimately see who is online
+        state = 'normal' if admin else 'disabled'
+        for name in ('btn_broadcast', 'ent_broadcast'):
+            w = getattr(self, name, None)
+            if w is not None:
+                try:
+                    w.configure(state=state)
+                except tk.TclError:
+                    pass
+        if hasattr(self, 'has_tray'):   # not during the initial build
+            self._refresh(reschedule=False)
+
+    def toggle_admin_mode(self):
+        if self.admin_mode:
+            self.admin_mode = False
+            self.apply_mode()
+            return
+        stored = self._stored_admin_password()
+        if stored:
+            pw = simpledialog.askstring(
+                'Admin mode', 'Admin password:', show='*', parent=self.root)
+            if pw is None:
+                return
+            if not check_password(pw, stored):
+                messagebox.showerror('Admin mode', 'Wrong password.')
+                return
+        elif not messagebox.askokcancel(
+                'Admin mode',
+                'No admin password is set yet, so the admin view is open to '
+                'anyone using this PC.\n\nOpen it now? You can set a password '
+                'in Settings.'):
+            return
+        self.admin_mode = True
+        self.apply_mode()
+
+    def set_admin_password(self):
+        pw = simpledialog.askstring(
+            'Admin password', 'New admin password (empty = remove):',
+            show='*', parent=self.root)
+        if pw is None:
+            return
+        value = hash_password(pw) if pw else ''
+        try:
+            save_settings(self.controller.ini_path, panel={'admin_password': value})
+        except OSError as exc:
+            messagebox.showerror('Could not save', str(exc))
+            return
+        self.lbl_settings.configure(
+            text='Admin password set.' if pw else 'Admin password removed.')
+        messagebox.showinfo(
+            'Admin password',
+            'Saved.\n\nNote: this only locks this panel. Anyone with access to '
+            'the files can still read the database directly — it is a '
+            'convenience lock, not real security.')
+
+    # -- game files ------------------------------------------------------
+
+    def show_files_menu(self):
+        game_dir = gamelang.find_game_dir()
+        menu = tk.Menu(self.root, tearoff=0)
+        if game_dir:
+            menu.add_command(label='Game folder',
+                             command=lambda: self._open_path(game_dir))
+            menu.add_command(
+                label='set.txt  (view distance / detail)',
+                command=lambda: self._open_path(
+                    os.path.join(game_dir, 'set.txt')))
+            menu.add_command(label='Mods folder',
+                             command=lambda: self._open_path(
+                                 os.path.join(game_dir, 'Mods')))
+            menu.add_command(label='WDFiles (archives)',
+                             command=lambda: self._open_path(
+                                 os.path.join(game_dir, 'WDFiles')))
+        else:
+            menu.add_command(label='(game not found)', state='disabled')
+        menu.add_separator()
+        menu.add_command(label='Server folder',
+                         command=lambda: self._open_path(self.root_dir))
+        if self.admin_mode:
+            menu.add_command(label='Config.ini',
+                             command=lambda: self._open_path(
+                                 self.controller.ini_path))
+            menu.add_command(label='PlayerData',
+                             command=lambda: self._open_path(
+                                 os.path.join(self.root_dir, 'PlayerData')))
+        try:
+            x = self.btn_files.winfo_rootx()
+            y = self.btn_files.winfo_rooty() + self.btn_files.winfo_height()
+            menu.tk_popup(x, y)
+        finally:
+            menu.grab_release()
+
+    def _open_path(self, path):
+        """Open a file or folder with the system default handler."""
+        if not os.path.exists(path):
+            messagebox.showinfo('Not found', f'{path} does not exist.')
+            return
+        try:
+            os.startfile(path)          # Windows: file -> editor, dir -> explorer
+        except OSError as exc:
+            messagebox.showerror('Could not open', str(exc))
 
     def find_game_exe(self):
         """Path of the installed game executable, or None."""

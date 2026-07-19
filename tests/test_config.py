@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 
+from tw1mp import config
 from tw1mp.config import Config
 
 
@@ -40,3 +41,29 @@ class TestConfig(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestAdminPassword(unittest.TestCase):
+    """The panel's admin gate. A convenience lock, but it must at least not
+    store the password in the clear and must reject wrong input."""
+
+    def test_roundtrip(self):
+        stored = config.hash_password('geheim')
+        self.assertTrue(config.check_password('geheim', stored))
+        self.assertFalse(config.check_password('falsch', stored))
+
+    def test_not_stored_in_clear(self):
+        stored = config.hash_password('geheim')
+        self.assertNotIn('geheim', stored)
+        self.assertIn('$', stored)          # salt$digest
+
+    def test_salted_so_equal_passwords_differ(self):
+        self.assertNotEqual(config.hash_password('x'), config.hash_password('x'))
+
+    def test_empty_or_missing_never_passes(self):
+        for stored in ('', None, 'garbage'):
+            self.assertFalse(config.check_password('anything', stored))
+
+    def test_panel_defaults_to_client(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(config.Config(root=tmp).panel_mode, 'client')

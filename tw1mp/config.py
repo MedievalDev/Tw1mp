@@ -47,6 +47,14 @@ DEFAULTS = {
         'bot_website': 'https://twmp.alchemy-fox.de/',
         'bot_discord': '',
     },
+    'Panel': {
+        # The desktop panel opens in this mode. 'client' hides everything that
+        # controls or exposes the server; 'server' is the full admin view.
+        'mode': 'client',
+        # Salted hash of the admin password (set it in the panel, never by
+        # hand). Empty = no password set, admin mode is unlocked.
+        'admin_password': '',
+    },
     'Web': {
         # Optional HTTP status server.
         'enabled': 'false',
@@ -83,14 +91,35 @@ def _ini_value(key, value):
     return str(value)
 
 
-def save_settings(path, server=None, web=None):
-    """Merge the given [Server]/[Web] values into the INI file at `path`,
-    preserving everything else and any comments the loader tolerates."""
+def hash_password(password, salt=None):
+    """Salted hash for the panel's admin password.
+
+    This gates the desktop panel's admin view; it is a convenience lock, not
+    real security - anyone with file access can read the database directly.
+    """
+    import hashlib
+    import os as _os
+    salt = salt or _os.urandom(8).hex()
+    digest = hashlib.sha256((salt + password).encode('utf-8')).hexdigest()
+    return f'{salt}${digest}'
+
+
+def check_password(password, stored):
+    if not stored or '$' not in stored:
+        return False
+    salt = stored.split('$', 1)[0]
+    return hash_password(password, salt) == stored
+
+
+def save_settings(path, server=None, web=None, panel=None):
+    """Merge the given [Server]/[Web]/[Panel] values into the INI file at
+    `path`, preserving everything else."""
     cfg = configparser.ConfigParser()
     cfg.read_dict(DEFAULTS)
     if os.path.exists(path):
         cfg.read(path)
-    for section, values in (('Server', server), ('Web', web)):
+    for section, values in (('Server', server), ('Web', web),
+                            ('Panel', panel)):
         if not values:
             continue
         if section not in cfg:
@@ -140,6 +169,11 @@ class Config:
         self.bot_password = srv.get('bot_password')
         self.bot_website = srv.get('bot_website')
         self.bot_discord = srv.get('bot_discord')
+        panel = cfg['Panel'] if 'Panel' in cfg else {}
+        self.panel_mode = (panel.get('mode') or 'client').strip().lower()
+        if self.panel_mode not in ('client', 'server'):
+            self.panel_mode = 'client'
+        self.admin_password = panel.get('admin_password') or ''
         web = cfg['Web']
         self.web_enabled = _safe(web.getboolean, 'Web', 'enabled')
         self.web_port = _safe(web.getint, 'Web', 'port')
