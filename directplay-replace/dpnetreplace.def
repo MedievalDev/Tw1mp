@@ -3,3 +3,4 @@ EXPORTS
     DllGetClassObject   PRIVATE
     DllCanUnloadNow     PRIVATE
     DpnTestSetDrop      PRIVATE
+    DpnTestSetTimeout   PRIVATE

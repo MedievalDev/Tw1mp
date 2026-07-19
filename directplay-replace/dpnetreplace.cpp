@@ -38,10 +38,14 @@
 struct WirePkt { DWORD magic; BYTE type; };  // magic 'TWDP'
 #pragma pack(pop)
 static const DWORD WIRE_MAGIC = 0x50445754;  // 'TWDP' little-endian
-enum { PKT_CONNECT = 1, PKT_ACK = 2, PKT_DATA = 3, PKT_BYE = 4, PKT_DATA_ACK = 5 };
+enum { PKT_CONNECT = 1, PKT_ACK = 2, PKT_DATA = 3, PKT_BYE = 4, PKT_DATA_ACK = 5,
+       PKT_PING = 6 };
 // Reliable-send tuning.
 static const DWORD RELIABLE_RTO_MS = 150;   // resend if unacked this long
 static const DWORD RELIABLE_MAX_RETRIES = 40; // ~6s before giving up
+// Liveness tuning.
+static const DWORD KEEPALIVE_MS = 2000;     // send a ping if idle this long
+static DWORD g_peerTimeoutMs = 10000;       // declare peer dead after this silence (test-tunable)
 
 static std::string ToUtf8(const std::wstring& w) {
     if (w.empty()) return std::string();
@@ -705,9 +709,11 @@ private:
             int n = recvfrom(m_sock, (char*)buf.data(), (int)buf.size(), 0,
                              (sockaddr*)&from, &fl);
             RetransmitTick();   // runs at least every recv timeout (~200ms)
+            ConnMaintain();     // keepalive + dead-peer timeout
             if (n < (int)(sizeof(WirePkt) + sizeof(DPNID))) continue;
             WirePkt* h = (WirePkt*)buf.data();
             if (h->magic != WIRE_MAGIC) continue;
+            if (m_hasPeer) InterlockedExchange(&m_lastRecvMs, (LONG)GetTickCount());
             DPNID sender; memcpy(&sender, buf.data() + sizeof(WirePkt), sizeof(DPNID));
             BYTE* body = buf.data() + sizeof(WirePkt) + sizeof(DPNID);
             DWORD bodyLen = n - sizeof(WirePkt) - sizeof(DPNID);
@@ -725,6 +731,8 @@ private:
             if (len) m_peerName = FromUtf8((char*)body, (int)len);
             m_hasPeer = true;        // publish address/ids before the flag
             LeaveCriticalSection(&m_lock);
+            InterlockedExchange(&m_lastRecvMs, (LONG)GetTickCount());
+            m_lastPingMs = GetTickCount();
             Log("net: joiner '%S' connected, dpnid 2", m_peerName.c_str());
             std::string hn = ToUtf8(m_playerName);   // reply with our name
             SendWire(PKT_ACK, m_localDpnid, hn.data(), (DWORD)hn.size());
@@ -739,6 +747,8 @@ private:
             if (len) m_peerName = FromUtf8((char*)body, (int)len);
             m_hasPeer = true;
             LeaveCriticalSection(&m_lock);
+            InterlockedExchange(&m_lastRecvMs, (LONG)GetTickCount());
+            m_lastPingMs = GetTickCount();
             Log("net: host '%S' accepted, local dpnid 2, host dpnid 1", m_peerName.c_str());
             Job cc; cc.type = Job::CONNECT_COMPLETE; cc.handle = m_connectHandle;
             cc.context = m_connectContext; cc.result = S_OK; Enqueue(cc);
@@ -790,6 +800,9 @@ private:
             LeaveCriticalSection(&m_relLock);
             break;
         }
+        case PKT_PING: {
+            break;   // liveness only; receipt already refreshed m_lastRecvMs
+        }
         case PKT_BYE: {
             if (m_hasPeer) {
                 Job dp; dp.type = Job::DESTROY_PLAYER; dp.dpnid = m_remoteDpnid; Enqueue(dp);
@@ -797,6 +810,28 @@ private:
             }
             break;
         }
+        }
+    }
+
+    // Called from the net thread ~5x/s. Sends periodic keepalives and, if the
+    // peer has gone silent past PEER_TIMEOUT_MS (crash with no BYE), synthesizes
+    // a DESTROY_PLAYER so the game doesn't hang on a dead connection.
+    void ConnMaintain() {
+        if (!m_hasPeer || m_sock == INVALID_SOCKET) return;
+        DWORD now = GetTickCount();
+        if (now - m_lastPingMs >= KEEPALIVE_MS) {
+            SendWire(PKT_PING, m_localDpnid, NULL, 0);
+            m_lastPingMs = now;
+        }
+        DWORD last = (DWORD)m_lastRecvMs;
+        if (last && (now - last) >= g_peerTimeoutMs) {
+            DPNID dead = m_remoteDpnid;
+            m_hasPeer = false;
+            Log("net: peer dpnid %lu timed out (%lums silent)", dead, now - last);
+            EnterCriticalSection(&m_relLock);   // drop reliable state for the dead link
+            m_unacked.clear(); m_reorder.clear();
+            LeaveCriticalSection(&m_relLock);
+            Job dp; dp.type = Job::DESTROY_PLAYER; dp.dpnid = dead; Enqueue(dp);
         }
     }
 
@@ -962,6 +997,11 @@ private:
     std::map<DWORD, Unacked> m_unacked;        // sent, awaiting ack
     std::map<DWORD, std::vector<BYTE>> m_reorder; // received out of order
     DWORD m_tickMs = 0;                        // last GetTickCount for RTO
+
+    // liveness: keepalive + dead-peer detection (a peer that crashes never
+    // sends BYE, so we time out on silence and synthesize DESTROY_PLAYER)
+    volatile LONG m_lastRecvMs = 0;            // GetTickCount of last packet from peer
+    DWORD m_lastPingMs = 0;                    // GetTickCount of last keepalive sent
 };
 
 // ===================================================================
@@ -1015,6 +1055,7 @@ STDAPI DllCanUnloadNow(void) { return g_objects == 0 ? S_OK : S_FALSE; }
 // Test-only hook: set the outgoing DATA/DATA_ACK drop percentage at runtime so
 // the self-test can toggle simulated packet loss for the reliability phase only.
 extern "C" void DpnTestSetDrop(int pct) { g_dropPct = pct; Log("DpnTestSetDrop: %d%%", pct); }
+extern "C" void DpnTestSetTimeout(int ms) { g_peerTimeoutMs = (DWORD)ms; Log("DpnTestSetTimeout: %dms", ms); }
 
 BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {

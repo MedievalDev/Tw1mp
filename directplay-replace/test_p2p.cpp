@@ -14,6 +14,7 @@
 
 typedef HRESULT (WINAPI *PFN_DllGetClassObject)(REFCLSID, REFIID, LPVOID*);
 typedef void (*PFN_DpnTestSetDrop)(int);
+typedef void (*PFN_DpnTestSetTimeout)(int);
 
 static volatile LONG g_hostGotPeer = 0;     // host saw CREATE_PLAYER for joiner (dpnid 2)
 static volatile LONG g_joinConnected = 0;   // joiner got CONNECT_COMPLETE
@@ -26,6 +27,7 @@ static char g_hostMsg[256] = {0}, g_joinMsg[256] = {0};
 #define RELIABLE_N 50
 static volatile LONG g_relCount = 0;        // how many reliable msgs received in order
 static volatile LONG g_relOutOfOrder = 0;   // set if a seq arrives out of order/dup
+static volatile LONG g_hostDestroyed = 0;   // host saw DESTROY_PLAYER for the joiner (dpnid 2)
 
 static HRESULT WINAPI HostHandler(PVOID, DWORD id, PVOID msg) {
     if (id == DPN_MSGID_CREATE_PLAYER) {
@@ -40,6 +42,10 @@ static HRESULT WINAPI HostHandler(PVOID, DWORD id, PVOID msg) {
             snprintf(g_hostMsg, sizeof(g_hostMsg), "%.*s", m->dwReceiveDataSize, (char*)m->pReceiveData);
             InterlockedExchange(&g_hostRecv, 1);
         }
+    } else if (id == DPN_MSGID_DESTROY_PLAYER) {
+        DPNMSG_DESTROY_PLAYER* m = (DPNMSG_DESTROY_PLAYER*)msg;
+        printf("[HOST] DESTROY_PLAYER dpnid=%lu\n", m->dpnidPlayer);
+        if (m->dpnidPlayer == 2) InterlockedExchange(&g_hostDestroyed, 1);
     } else if (id == DPN_MSGID_INDICATE_CONNECT) {
         printf("[HOST] INDICATE_CONNECT (accept)\n");
     }
@@ -159,11 +165,29 @@ int main() {
                g_relCount, RELIABLE_N, g_relOutOfOrder);
     }
 
+    // --- Dead-peer detection ---
+    // Simulate a total partition (crash with no BYE) by dropping 100% of
+    // traffic and shortening the timeout; the host must synthesize
+    // DESTROY_PLAYER for the now-silent joiner.
+    PFN_DpnTestSetTimeout setTimeout =
+        (PFN_DpnTestSetTimeout)GetProcAddress(dll, "DpnTestSetTimeout");
+    bool dead = false;
+    if (!setDrop || !setTimeout) {
+        printf("\n== dead-peer: SKIPPED (test hooks not exported) ==\n");
+        dead = true;
+    } else {
+        setTimeout(800);
+        setDrop(100);               // total partition, no BYE reaches the host
+        dead = WaitFlag(&g_hostDestroyed, 4000);
+        setDrop(0); setTimeout(10000);
+        printf("\n== dead-peer: %s ==\n", dead ? "OK" : "FAILED");
+    }
+
     host->Close(0); join->Close(0);
     for (DWORD i = 0; i < na; ++i) if (addrs[i]) addrs[i]->Release();
     host->Release(); join->Release();
 
-    bool pass = ok && got && rel;
+    bool pass = ok && got && rel && dead;
     printf("\n=== RESULT: %s ===\n", pass ? "PASS" : "FAIL");
     return pass ? 0 : 2;
 }
