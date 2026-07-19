@@ -14,6 +14,7 @@ variant used by Two Worlds 1 is supported here).
 
 import logging
 import os
+import re
 import struct
 import zlib
 
@@ -172,6 +173,23 @@ def load_translations(game_dir=None):
     return merged
 
 
+# The game's strings carry inline markup: colour tags (<0xFFFFFFFF>), format
+# tags (<F2>, <t+>, <br>) and inline icons (<ico...,'Inter...dds'>).
+_RE_MARKUP = re.compile(r'<[^>]*>')
+
+
+def clean_text(text):
+    """Strip the game's inline markup tags and surrounding whitespace."""
+    return _RE_MARKUP.sub('', text).strip()
+
+
 def item_name(item_id, game_dir=None):
-    """Localised name for an item id, falling back to the id itself."""
-    return load_translations(game_dir).get(item_id, item_id)
+    """Localised name for an item id, falling back to the id itself.
+
+    Entries are stored as ``<colour>Name<colour>\\nDescription``, so the
+    name is the first line with the markup removed.
+    """
+    text = load_translations(game_dir).get(item_id)
+    if not text:
+        return item_id
+    return clean_text(text.split('\n', 1)[0]) or item_id

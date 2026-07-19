@@ -47,6 +47,38 @@ class TestLanParser(unittest.TestCase):
             gamelang._cache = None
 
 
+class TestNameCleanup(unittest.TestCase):
+    """Game strings are '<colour>Name<colour>\\nDescription' with inline
+    markup; only the plain name should reach the UI."""
+
+    def setUp(self):
+        gamelang._cache = {
+            'MAGIC_POISONDART': '<0xFFFFFFFF>Giftgruß<0xFFAAAAAA>\n'
+                                'Verteilt Giftschaden beim getroffnen Gegner. ',
+            'PLAIN': 'Steinpilz',
+            'FORMATTED': '<F2>Trank<t+><br>',
+            'ICONED': "<ico0x1l,192,0,255,63,'Inter01.dds'>Bogen<0xFF00FF00>",
+            'ONLY_MARKUP': '<0xFFFFFFFF><F2>',
+        }
+        self.addCleanup(setattr, gamelang, '_cache', None)
+
+    def test_strips_colour_tags_and_description(self):
+        self.assertEqual(gamelang.item_name('MAGIC_POISONDART'), 'Giftgruß')
+
+    def test_plain_name_untouched(self):
+        self.assertEqual(gamelang.item_name('PLAIN'), 'Steinpilz')
+
+    def test_strips_format_and_icon_tags(self):
+        self.assertEqual(gamelang.item_name('FORMATTED'), 'Trank')
+        self.assertEqual(gamelang.item_name('ICONED'), 'Bogen')
+
+    def test_markup_only_falls_back_to_id(self):
+        self.assertEqual(gamelang.item_name('ONLY_MARKUP'), 'ONLY_MARKUP')
+
+    def test_unknown_id_falls_back(self):
+        self.assertEqual(gamelang.item_name('NOPE'), 'NOPE')
+
+
 @unittest.skipUnless(
     os.name == 'nt' and gamelang.find_game_dir(),
     'requires an installed Two Worlds game')
