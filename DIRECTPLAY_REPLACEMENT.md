@@ -304,6 +304,41 @@ erzeugung und Nachrichtenaustausch OHNE das Spiel - Ergebnis PASS.
 Naechster Schritt: 2-Maschinen-Test mit dem echten Client (beide Rechner
 registrieren die Replacement-DLL).
 
+## Phase 3+ - Reliability + Liveness (2026-07-19)
+
+Ueber das rohe UDP-Transport gelegt, damit die Verbindung praxistauglich wird:
+
+- **Reliable ordered delivery fuer `DPNSEND_GUARANTEED`.** Jedes reliable
+  Paket traegt eine Sequenznummer; der Empfaenger ACKt jedes (PKT_DATA_ACK),
+  puffert out-of-order Pakete (m_reorder), verwirft Duplikate und liefert
+  streng in Reihenfolge aus (m_rSeqInExpected). Der Sender haelt unbestaetigte
+  Pakete (m_unacked) und `RetransmitTick` sendet nach 150ms RTO neu (max 40
+  Versuche, ~6s). Unreliable Sends gehen weiter best-effort direkt raus.
+- **Keepalive + Dead-Peer-Timeout.** Ein abgestuerzter Peer sendet nie BYE
+  (genau der Fall „Surface zwischendrin abgeschmiert"). PKT_PING alle 2s;
+  bleibt der Peer >10s still, synthetisiert der Net-Thread `DESTROY_PLAYER`
+  und verwirft den Reliable-State — das Spiel merkt sauber, dass der Partner
+  weg ist, statt an einer toten Verbindung zu haengen.
+
+Der Selbsttest (test_p2p.cpp) deckt jetzt vier Phasen ab und ist gruen
+(15/15 im Soak): Handshake, beidseitiges Messaging, **50 garantierte
+Nachrichten unter 30% Paketverlust — alle exakt einmal, in Reihenfolge**,
+und **Dead-Peer-Erkennung** (100% Verlust inkl. Keepalives + kurzer Timeout
+ueber die Test-Hooks DpnTestSetDrop/DpnTestSetTimeout → Host feuert
+DESTROY_PLAYER).
+
+Ein adversarialer Review dieses neuen Codes fand einen HIGH- und mehrere
+MED-Bugs, alle behoben: (H1) Retransmit-Aufgabe (~6s) riss den garantierten
+Kanal still ab statt die Verbindung sauber zu beenden → jetzt gemeinsamer
+`DropPeer`-Teardown; (M1) Seq-Zaehler wurden bei Reconnect nicht
+zurueckgesetzt → Reset in `DropPeer` und beim Verbindungsaufbau; (M2)
+RECEIVE nach falschem DESTROY → PKT_DATA gated auf lebenden Peer; (M3)
+unbeschrankter Reorder-Puffer → Empfangsfenster (RECV_WINDOW=256, ausserhalb
+weder puffern noch acken); (M4) Race auf `m_hasPeer` → `volatile LONG` mit
+atomarem Test-and-Clear. Dazu: StartNet/StartWorker idempotent, `m_wake`
+TOCTOU beim Teardown geschlossen.
+
 Stand: 2026-07-19. Scoping + Feasibility + Ladepfad + Phase 0
-(Ground-Truth) + **Phase 1 (Solo-Host-Replacement, live verifiziert)**
-abgeschlossen.
+(Ground-Truth) + **Phase 1 (Solo-Host-Replacement, live verifiziert)** +
+**Phase 3 (UDP-Transport, Reliability, Liveness — selbst-verifiziert)**
+abgeschlossen. Offen: 2-Maschinen-Test mit dem echten Client.

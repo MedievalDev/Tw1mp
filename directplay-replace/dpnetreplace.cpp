@@ -46,6 +46,9 @@ static const DWORD RELIABLE_MAX_RETRIES = 40; // ~6s before giving up
 // Liveness tuning.
 static const DWORD KEEPALIVE_MS = 2000;     // send a ping if idle this long
 static DWORD g_peerTimeoutMs = 10000;       // declare peer dead after this silence (test-tunable)
+// Receive window: cap how far ahead of the next-expected seq we buffer, so a
+// buggy/hostile peer can't grow m_reorder without bound.
+static const DWORD RECV_WINDOW = 256;
 
 static std::string ToUtf8(const std::wstring& w) {
     if (w.empty()) return std::string();
@@ -568,6 +571,7 @@ private:
     };
 
     void StartWorker() {
+        if (m_thread) return;   // idempotent: never leak a second worker thread
         m_stop = false;
         m_wake = CreateEventW(NULL, FALSE, FALSE, NULL);
         m_thread = CreateThread(NULL, 0, &ReplPeer::ThreadEntry, this, 0, NULL);
@@ -583,13 +587,18 @@ private:
         if (GetThreadId(m_thread) == GetCurrentThreadId()) return;
         WaitForSingleObject(m_thread, INFINITE);
         CloseHandle(m_thread); m_thread = NULL;
-        HANDLE w = m_wake; m_wake = NULL; if (w) CloseHandle(w);
+        // Null m_wake under m_lock so a concurrent Enqueue on another thread
+        // can't SetEvent a handle we're about to close.
+        EnterCriticalSection(&m_lock);
+        HANDLE w = m_wake; m_wake = NULL;
+        LeaveCriticalSection(&m_lock);
+        if (w) CloseHandle(w);
     }
     void Enqueue(Job& j) {
         EnterCriticalSection(&m_lock);
         m_queue.push_back(std::move(j));
+        if (m_wake) SetEvent(m_wake);   // signal under the lock: m_wake stays valid
         LeaveCriticalSection(&m_lock);
-        if (m_wake) SetEvent(m_wake);
     }
     DPNHANDLE NextHandle() { return (DPNHANDLE)InterlockedIncrement(&m_nextHandle); }
 
@@ -613,7 +622,10 @@ private:
     }
 
     void SendWire(BYTE type, DPNID sender, const void* payload, DWORD len) {
-        if (m_sock == INVALID_SOCKET || !m_hasPeer && type == PKT_DATA) return;
+        if (m_sock == INVALID_SOCKET || (!m_hasPeer && type == PKT_DATA)) return;
+        // Test hook: PKT_PING is droppable so DpnTestSetDrop(100) is a true
+        // partition (otherwise keepalives would keep the peer looking alive).
+        if (type == PKT_PING && DropRoll()) return;
         std::vector<BYTE> pkt(sizeof(WirePkt) + sizeof(DPNID) + len);
         WirePkt* h = (WirePkt*)pkt.data(); h->magic = WIRE_MAGIC; h->type = type;
         memcpy(pkt.data() + sizeof(WirePkt), &sender, sizeof(DPNID));
@@ -665,24 +677,50 @@ private:
         if (m_sock == INVALID_SOCKET) return;
         DWORD now = GetTickCount();
         std::vector<std::vector<BYTE>> resend;
+        bool gaveUp = false;
         EnterCriticalSection(&m_relLock);
         for (auto it = m_unacked.begin(); it != m_unacked.end(); ) {
             if (now - it->second.lastSend >= RELIABLE_RTO_MS) {
-                if (++it->second.retries > RELIABLE_MAX_RETRIES) { it = m_unacked.erase(it); continue; }
+                if (++it->second.retries > RELIABLE_MAX_RETRIES) { gaveUp = true; break; }
                 it->second.lastSend = now;
                 resend.push_back(it->second.pkt);
             }
             ++it;
         }
         LeaveCriticalSection(&m_relLock);
+        // A guaranteed message that can't be delivered after ~6s means the link
+        // is dead; surface it as a lost peer instead of silently advancing the
+        // send seq (which would strand every later message in the peer's
+        // reorder buffer forever). Tear the connection down.
+        if (gaveUp) { DropPeer(m_remoteDpnid, "reliable send gave up"); return; }
         for (auto& p : resend)
             if (!DropRoll())
                 sendto(m_sock, (char*)p.data(), (int)p.size(), 0,
                        (sockaddr*)&m_peerAddr, sizeof(m_peerAddr));
     }
 
+    // Single teardown path for a lost peer (BYE, timeout, or reliable give-up).
+    // Atomically test-and-clears m_hasPeer so it fires DESTROY_PLAYER exactly
+    // once, resets the reliable-send state so a later reconnect starts clean,
+    // and notifies the game.
+    void DropPeer(DPNID dead, const char* reason) {
+        if (InterlockedExchange(&m_hasPeer, 0) == 0) return;   // already dropped
+        Log("net: dropping peer dpnid %lu (%s)", dead, reason);
+        ResetReliable();
+        Job dp; dp.type = Job::DESTROY_PLAYER; dp.dpnid = dead; Enqueue(dp);
+    }
+
+    // Clear all reliable-send state so the next session starts from seq 0.
+    void ResetReliable() {
+        EnterCriticalSection(&m_relLock);
+        m_unacked.clear(); m_reorder.clear();
+        m_rSeqOut = 0; m_rSeqInExpected = 0;
+        LeaveCriticalSection(&m_relLock);
+    }
+
     void StartNet() {
         if (m_sock == INVALID_SOCKET) return;   // no socket -> no net thread
+        if (m_netThread) return;                // idempotent: no duplicate net thread
         m_netStop = false;
         m_netThread = CreateThread(NULL, 0, &ReplPeer::NetEntry, this, 0, NULL);
     }
@@ -725,6 +763,7 @@ private:
         switch (type) {
         case PKT_CONNECT: {          // host side: a joiner knocked
             if (!m_isHost || m_hasPeer) break;
+            ResetReliable();         // fresh session (host may be reused after a drop)
             EnterCriticalSection(&m_lock);
             m_peerAddr = from;
             m_remoteDpnid = 2;
@@ -742,6 +781,7 @@ private:
         }
         case PKT_ACK: {              // joiner side: host accepted
             if (m_isHost || m_hasPeer) break;
+            ResetReliable();
             EnterCriticalSection(&m_lock);
             m_localDpnid = 2; m_remoteDpnid = 1;
             if (len) m_peerName = FromUtf8((char*)body, (int)len);
@@ -758,6 +798,7 @@ private:
         }
         case PKT_DATA: {
             if (len < 1 + sizeof(DWORD)) break;
+            if (!m_hasPeer) break;              // no data before/after a live peer
             bool reliable = body[0] != 0;
             DWORD seq; memcpy(&seq, body + 1, sizeof(DWORD));
             BYTE* payload = body + 1 + sizeof(DWORD);
@@ -767,10 +808,10 @@ private:
                 rc.data.assign(payload, payload + plen); Enqueue(rc);
                 break;
             }
-            SendAck(seq);      // ack every reliable packet (even duplicates)
             // Ordered, de-duplicated delivery. Collect what to deliver under
             // the lock, then enqueue outside it (Enqueue takes m_lock).
             std::vector<std::vector<BYTE>> deliver;
+            bool ack = false;
             EnterCriticalSection(&m_relLock);
             if (seq == m_rSeqInExpected) {
                 deliver.emplace_back(payload, payload + plen);
@@ -782,10 +823,15 @@ private:
                     m_rSeqInExpected++;
                     it = m_reorder.find(m_rSeqInExpected);
                 }
-            } else if (seq > m_rSeqInExpected) {
+                ack = true;
+            } else if (seq < m_rSeqInExpected) {
+                ack = true;                     // duplicate: re-ack, don't store
+            } else if (seq - m_rSeqInExpected <= RECV_WINDOW) {
                 if (!m_reorder.count(seq)) m_reorder[seq].assign(payload, payload + plen);
-            }   // seq < expected: already delivered, drop
+                ack = true;                     // future, within window: buffer + ack
+            }   // beyond window: neither buffer nor ack (bounds memory; sender retries)
             LeaveCriticalSection(&m_relLock);
+            if (ack) SendAck(seq);              // ack after releasing the lock
             for (auto& d : deliver) {
                 Job rc; rc.type = Job::RECEIVE; rc.dpnid = sender; rc.data = std::move(d);
                 Enqueue(rc);
@@ -804,10 +850,7 @@ private:
             break;   // liveness only; receipt already refreshed m_lastRecvMs
         }
         case PKT_BYE: {
-            if (m_hasPeer) {
-                Job dp; dp.type = Job::DESTROY_PLAYER; dp.dpnid = m_remoteDpnid; Enqueue(dp);
-                m_hasPeer = false;
-            }
+            DropPeer(m_remoteDpnid, "peer sent BYE");
             break;
         }
         }
@@ -824,15 +867,8 @@ private:
             m_lastPingMs = now;
         }
         DWORD last = (DWORD)m_lastRecvMs;
-        if (last && (now - last) >= g_peerTimeoutMs) {
-            DPNID dead = m_remoteDpnid;
-            m_hasPeer = false;
-            Log("net: peer dpnid %lu timed out (%lums silent)", dead, now - last);
-            EnterCriticalSection(&m_relLock);   // drop reliable state for the dead link
-            m_unacked.clear(); m_reorder.clear();
-            LeaveCriticalSection(&m_relLock);
-            Job dp; dp.type = Job::DESTROY_PLAYER; dp.dpnid = dead; Enqueue(dp);
-        }
+        if (last && (now - last) >= g_peerTimeoutMs)
+            DropPeer(m_remoteDpnid, "timed out");
     }
 
     static bool ParseHostAddr(IDirectPlay8Address* a, std::string& host, unsigned short& port) {
@@ -983,7 +1019,7 @@ private:
     bool m_isHost = false;
     DPNID m_localDpnid = 0;
     DPNID m_remoteDpnid = 0;
-    bool m_hasPeer = false;
+    volatile LONG m_hasPeer = 0;   // LONG (not bool) for atomic test-and-clear in DropPeer
     sockaddr_in m_peerAddr{};
     DPNHANDLE m_connectHandle = 0;
     void* m_connectContext = NULL;
@@ -996,7 +1032,6 @@ private:
     DWORD m_rSeqInExpected = 0;                // next reliable seq to deliver
     std::map<DWORD, Unacked> m_unacked;        // sent, awaiting ack
     std::map<DWORD, std::vector<BYTE>> m_reorder; // received out of order
-    DWORD m_tickMs = 0;                        // last GetTickCount for RTO
 
     // liveness: keepalive + dead-peer detection (a peer that crashes never
     // sends BYE, so we time out on silence and synthesize DESTROY_PLAYER)
