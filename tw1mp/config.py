@@ -42,6 +42,10 @@ DEFAULTS = {
         'bot_enabled': 'false',
         'bot_name': 'Admin',
         'bot_password': 'tw1mp-bot',
+        # Links the bot hands out on !web / !discord. Leave discord empty
+        # until there is an invite; the bot then says so instead of lying.
+        'bot_website': 'https://twmp.alchemy-fox.de/',
+        'bot_discord': '',
     },
     'Web': {
         # Optional HTTP status server.
@@ -134,6 +138,8 @@ class Config:
         self.bot_enabled = _safe(srv.getboolean, 'Server', 'bot_enabled')
         self.bot_name = srv.get('bot_name')
         self.bot_password = srv.get('bot_password')
+        self.bot_website = srv.get('bot_website')
+        self.bot_discord = srv.get('bot_discord')
         web = cfg['Web']
         self.web_enabled = _safe(web.getboolean, 'Web', 'enabled')
         self.web_port = _safe(web.getint, 'Web', 'port')

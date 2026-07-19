@@ -78,18 +78,40 @@ class TestAdminBot(unittest.TestCase):
 
     def test_greets_a_player_joining_its_town(self):
         cli = self._join()
-        self.assertIn(b'Welcome, alice!', cli.wait_for(b'Welcome', timeout=8))
+        self.assertIn(b'Willkommen, alice!',
+                      cli.wait_for(b'Willkommen', timeout=8))
         # ...and does not keep repeating it
         time.sleep(2.5)
-        self.assertNotIn(b'Welcome', cli.drain(1.0))
+        self.assertNotIn(b'Willkommen', cli.drain(1.0))
 
     def test_answers_chat_commands(self):
         cli = self._join()
-        cli.wait_for(b'Welcome', timeout=8)
-        self.assertIn(b'Commands:', self._ask(cli, '!help', b'Commands:'))
-        self.assertIn(b'Online: alice', self._ask(cli, '!players', b'Online:'))
-        self.assertIn(b'Server uptime:',
-                      self._ask(cli, '!uptime', b'Server uptime'))
+        cli.wait_for(b'Willkommen', timeout=8)
+        self.assertIn(b'Befehle:', self._ask(cli, '!help', b'Befehle:'))
+        self.assertIn(b'Online (1): alice',
+                      self._ask(cli, '!players', b'Online ('))
+        self.assertIn(b'Server laeuft seit',
+                      self._ask(cli, '!uptime', b'Server laeuft'))
+
+    def test_announces_website_and_info_commands(self):
+        cli = self._join()
+        # the greeting already advertises the site
+        self.assertIn(b'twmp.alchemy-fox.de',
+                      cli.wait_for(b'Infos', timeout=8))
+        checks = [
+            ('!web', b'twmp.alchemy-fox.de'),
+            ('!commands', b'buglord'),          # in-game console command list
+            ('!settings', b'FarPlane'),         # set.txt view-distance tuning
+            ('!server', b'Spieler online'),
+        ]
+        for message, marker in checks:
+            self.assertIn(marker, self._ask(cli, message, marker), message)
+
+    def test_discord_is_honest_when_unset(self):
+        cli = self._join()
+        cli.wait_for(b'Infos', timeout=8)
+        reply = self._ask(cli, '!discord', b'Discord')
+        self.assertIn(b'noch nicht eingerichtet', reply)
 
     def test_stays_silent_on_ordinary_chat(self):
         cli = self._join()

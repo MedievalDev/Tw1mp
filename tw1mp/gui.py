@@ -65,6 +65,9 @@ _SETTINGS_SPEC = [
     ('Admin bot  (always in the lobby, follows the players)', [
         ('Server', 'bot_enabled', 'Run the admin bot', 'bool'),
         ('Server', 'bot_name', 'Bot name', 'str'),
+        ('Server', 'bot_website', 'Website the bot advertises', 'str'),
+        ('Server', 'bot_discord', 'Discord invite (empty = not announced)',
+         'str'),
     ]),
     ('Network  (takes effect after a restart)', [
         ('Server', 'bind', 'Bind address (empty = all interfaces)', 'str'),

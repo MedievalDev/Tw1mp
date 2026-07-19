@@ -47,6 +47,84 @@ _FALLBACK_POS = '1000#2000'   # used until a real position has been captured
 
 _RE_SEND = re.compile(r'^/send\s+"([^"]*)"\s+"(.*)"$')
 
+# Marco's tuned set.txt - noticeably more view distance and detail than the
+# stock settings. Paste into <game>\set.txt (the game reads it on start).
+_VIEW_SETTINGS = [
+    'Engine.FarPlane 2500        (Sichtweite, Standard ist deutlich kleiner)',
+    'Engine.DLandFarClipp 7000   + DLandFarClippOBJ 7000  (Fernland + Objekte)',
+    'Engine.LOD0 3200 / LOD1 6400 / LODblend 1066         (Detailstufen)',
+    'Engine.AlphaFadeNear 1500 / AlphaFadeFar 3000        (Ausblenden)',
+    'Engine.GrassDisp 28 / GrassQ 0.4                     (Gras)',
+]
+
+# Bot chat commands: name -> callable(bot) -> list[str]
+_COMMANDS = {}
+
+
+def _command(*names):
+    def deco(fn):
+        for n in names:
+            _COMMANDS[n] = fn
+        return fn
+    return deco
+
+
+@_command('!help', '!commands?', '!hilfe')
+def _cmd_help(bot):
+    return ['Befehle: !help !players !uptime !server !web !discord '
+            '!commands !settings',
+            f'Mehr Infos: {bot.cfg.bot_website}']
+
+
+@_command('!players', '!online', '!who')
+def _cmd_players(bot):
+    names = sorted(bot._other_players())
+    if not names:
+        return ['Gerade ist sonst niemand online.']
+    return [f'Online ({len(names)}): ' + ', '.join(names)]
+
+
+@_command('!uptime')
+def _cmd_uptime(bot):
+    return ['Server laeuft seit ' + bot._uptime()]
+
+
+@_command('!server', '!info')
+def _cmd_server(bot):
+    n = len(bot._other_players())
+    return [f'{bot.cfg.title} - {n} Spieler online, laeuft seit {bot._uptime()}',
+            f'Website: {bot.cfg.bot_website}']
+
+
+@_command('!web', '!website', '!seite', '!homepage')
+def _cmd_web(bot):
+    return [f'Website & Downloads: {bot.cfg.bot_website}',
+            'Dort gibt es Anleitungen, Mods und die Server-Infos.']
+
+
+@_command('!discord')
+def _cmd_discord(bot):
+    if bot.cfg.bot_discord:
+        return [f'Discord: {bot.cfg.bot_discord}']
+    return ['Discord ist noch nicht eingerichtet - '
+            f'aktuelle Infos gibt es auf {bot.cfg.bot_website}']
+
+
+@_command('!commands', '!konsole', '!console', '!cmd')
+def _cmd_gamecommands(bot):
+    return ['Ingame-Konsole: mit ~ oeffnen. buglord hat alle 1086 Befehle '
+            'aus der EXE extrahiert:',
+            'github.com/buglord/Two-Worlds-1-Misc-Projects '
+            '-> Commands/TwoWorldsCommands.txt',
+            f'Kurzfassung & Beispiele: {bot.cfg.bot_website}']
+
+
+@_command('!settings', '!setup', '!sicht', '!view', '!grafik')
+def _cmd_settings(bot):
+    return (['Mehr Sichtweite & Details - in <Spielordner>\\set.txt eintragen:']
+            + _VIEW_SETTINGS
+            + [f'Komplette Datei zum Kopieren: {bot.cfg.bot_website}'])
+
 
 class AdminBot:
     def __init__(self, server):
@@ -205,24 +283,26 @@ class AdminBot:
             return                                   # our own line, echoed
         reply = self._answer(message.strip())
         if reply:
-            self._say(reply)
+            self._say_lines(reply)
 
     def _answer(self, message):
+        """Return a list of chat lines, or None to stay silent."""
         if not message.startswith('!'):
             return None
         command = message.split()[0].lower()
-        if command == '!help':
-            return 'Commands: !help, !players, !uptime'
-        if command == '!players':
-            names = sorted(self._other_players())
-            return ('Online: ' + ', '.join(names) if names
-                    else 'Nobody else is online right now.')
-        if command == '!uptime':
-            return 'Server uptime: ' + self._uptime()
-        return None
+        handler = _COMMANDS.get(command)
+        if not handler:
+            return None
+        return handler(self)
 
     def _say(self, text):
-        self._cmd('/send "{}"'.format(text.replace('"', "'")))
+        """Send one chat line (quotes stripped - they delimit the command)."""
+        self._cmd('/send "{}"'.format(str(text).replace('"', "'")))
+
+    def _say_lines(self, lines):
+        for line in lines:
+            if line:
+                self._say(line)
 
     def _uptime(self):
         total = int(time.time() - self.server.startTime)
@@ -257,7 +337,10 @@ class AdminBot:
         here = {name for name, info in self._players().items()
                 if info.get('town') == channel}
         for name in sorted(here - self.known):
-            self._say(f'Welcome, {name}! Type !help for commands.')
+            self._say_lines([
+                f'Willkommen, {name}! Tippe !help fuer alle Befehle.',
+                f'Infos, Mods & Anleitungen: {self.cfg.bot_website}',
+            ])
         self.known = here
 
     def _current_channel(self):
