@@ -176,9 +176,12 @@ class CommandParser:
             return None
         # A modified character variant is only ever served to a player who
         # is alone on the server; the choice then sticks for the session so
-        # a later save can never overwrite the original.
+        # a later save can never overwrite the original. The admin bot is
+        # not a real player, so it must not make everyone look accompanied.
+        bot = self.server.config.bot_name
         with self.server.state.lock:
-            alone = len(self.server.state.activeUsers) == 1
+            humans = [n for n in self.server.state.activeUsers if n != bot]
+        alone = len(humans) == 1
         use_modded = alone and \
             self.server.db.has_modded_playerdata(name, form)
         con.use_modded = use_modded

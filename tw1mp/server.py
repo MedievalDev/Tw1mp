@@ -313,6 +313,7 @@ class CoreServer(socketserver.ThreadingTCPServer):
         self.state = GameState(self)
         self.startTime = time.time()
         self.service_tick = 0
+        self.bot = None
         self.webapi = None
         if config.web_enabled:
             from .web import WebServer
@@ -381,10 +382,17 @@ class CoreServer(socketserver.ThreadingTCPServer):
             webThread = threading.Thread(target=self.webapi.serve_forever,
                                          daemon=True)
             webThread.start()
+        if self.config.bot_enabled:
+            from .adminbot import AdminBot
+            self.bot = AdminBot(self)
+            self.bot.start()
         try:
             # poll interval fixed to the position broadcast rate
             super().serve_forever(poll_interval)
         finally:
+            if self.bot:
+                self.bot.stop()
+                self.bot = None
             self.dist.end()
             if self.webapi:
                 self.webapi.shutdown()

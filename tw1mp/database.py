@@ -432,12 +432,17 @@ class Database:
                 cur.close()
 
     def register(self, username, serial, password, email='', location='',
-                 age=1, gender=0, description=''):
-        """Create an account. Returns OK or an ERR_* code."""
-        if self.is_banned(username, serial):
-            return ERR_BANNED
-        if not getattr(self.cfg, 'allow_registration', True):
-            return ERR_REGISTRATION_CLOSED
+                 age=1, gender=0, description='', force=False):
+        """Create an account. Returns OK or an ERR_* code.
+
+        `force` skips the ban and registration-lock policy; it exists for
+        accounts the server itself owns, such as the admin bot.
+        """
+        if not force:
+            if self.is_banned(username, serial):
+                return ERR_BANNED
+            if not getattr(self.cfg, 'allow_registration', True):
+                return ERR_REGISTRATION_CLOSED
         with self.lock:
             cur = self.db.cursor()
             try:

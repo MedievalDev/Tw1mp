@@ -37,6 +37,11 @@ DEFAULTS = {
         # 'TESTERROR' string instead of readable messages. Turn on if the
         # real client misbehaves on the readable error texts.
         'compat_login_errors': 'false',
+        # Admin bot: an always-connected lobby client that keeps the towns
+        # populated, follows the players and answers !help/!players/!uptime.
+        'bot_enabled': 'false',
+        'bot_name': 'Admin',
+        'bot_password': 'tw1mp-bot',
     },
     'Web': {
         # Optional HTTP status server.
@@ -126,6 +131,9 @@ class Config:
         self.send_nops = _safe(srv.getboolean, 'Server', 'send_nops')
         self.compat_login_errors = _safe(srv.getboolean, 'Server',
                                          'compat_login_errors')
+        self.bot_enabled = _safe(srv.getboolean, 'Server', 'bot_enabled')
+        self.bot_name = srv.get('bot_name')
+        self.bot_password = srv.get('bot_password')
         web = cfg['Web']
         self.web_enabled = _safe(web.getboolean, 'Web', 'enabled')
         self.web_port = _safe(web.getint, 'Web', 'port')

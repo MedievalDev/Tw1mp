@@ -62,6 +62,10 @@ _SETTINGS_SPEC = [
         ('Server', 'compat_login_errors',
          'Compatibility login-error text (TESTERROR)', 'bool'),
     ]),
+    ('Admin bot  (always in the lobby, follows the players)', [
+        ('Server', 'bot_enabled', 'Run the admin bot', 'bool'),
+        ('Server', 'bot_name', 'Bot name', 'str'),
+    ]),
     ('Network  (takes effect after a restart)', [
         ('Server', 'bind', 'Bind address (empty = all interfaces)', 'str'),
         ('Server', 'port', 'Port', 'int'),
