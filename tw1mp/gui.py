@@ -14,6 +14,7 @@ import logging
 import os
 import queue
 import socket
+import subprocess
 import threading
 import time
 import tkinter as tk
@@ -303,6 +304,9 @@ class MainWindow:
         self.btn_toggle = ttk.Button(bar, text='Start server',
                                      command=self.toggle_server)
         self.btn_toggle.pack(side='right', padx=6)
+        self.btn_game = ttk.Button(bar, text='Start game',
+                                   command=self.start_game)
+        self.btn_game.pack(side='right')
 
         notebook = ttk.Notebook(self.root)
         notebook.pack(fill='both', expand=True, padx=10, pady=(0, 10))
@@ -986,6 +990,42 @@ class MainWindow:
             self.stop_server()
         else:
             self.start_server()
+
+    def find_game_exe(self):
+        """Path of the installed game executable, or None."""
+        game_dir = gamelang.find_game_dir()
+        if not game_dir:
+            return None
+        # The Radeon build is the one the launcher normally starts; fall back
+        # to the standard build if it is missing.
+        for name in ('TwoWorlds_RADEON.exe', 'TwoWorlds.exe'):
+            exe = os.path.join(game_dir, name)
+            if os.path.exists(exe):
+                return exe
+        return None
+
+    def start_game(self):
+        """Launch Two Worlds straight into its network menu ('-network')."""
+        exe = self.find_game_exe()
+        if not exe:
+            messagebox.showerror(
+                'Game not found',
+                'No Two Worlds installation was found on this machine '
+                '(the registry has no DataPath, or the executable is '
+                'missing).')
+            return
+        if not self.controller.running and not messagebox.askokcancel(
+                'Server stopped',
+                'The lobby server is not running, so the game will not find '
+                'it in the server list.\n\nStart the game anyway?'):
+            return
+        try:
+            subprocess.Popen([exe, '-network'],
+                             cwd=os.path.dirname(exe))
+        except OSError as exc:
+            messagebox.showerror('Could not start the game', str(exc))
+            return
+        log.info('Launched %s -network', os.path.basename(exe))
 
     # -- character handling ---------------------------------------------
 
