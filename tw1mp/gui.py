@@ -18,6 +18,7 @@ import subprocess
 import threading
 import time
 import tkinter as tk
+import webbrowser
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from . import __version__, chardata, gamelang, savegame, tray
@@ -32,9 +33,147 @@ _POLL_MS = 150
 _REFRESH_MS = 1000
 _MAX_LOG_LINES = 2000
 
-_COL_OK = '#2e9e4f'
+_COL_OK = '#43b563'
 _COL_OFF = '#8a8a8a'
-_COL_ERR = '#c0392b'
+_COL_ERR = '#e06c60'
+
+# Dark palette, matching the twmp.alchemy-fox.de site.
+_BG = '#14110e'          # window background
+_PANEL = '#1c1813'       # raised surfaces (buttons, tabs, headings)
+_FIELD = '#231e17'       # entries, trees, lists
+_INK = '#ece7db'         # primary text
+_MUT = '#9a938a'         # secondary text
+_LINE = '#352f26'        # borders
+_GOLD = '#d2a044'        # accent
+_GOLD_HI = '#e3b45c'
+_SEL = '#3a3122'         # selection background
+
+_LINKS = (
+    ('TW1MP website', 'https://twmp.alchemy-fox.de/'),
+    ('Dialog & Quest Creator — guide', 'https://alchemy-fox.de/game/TW1_DialogAndQuestCreator/'),
+    ('GitHub — Tw1mp server', 'https://github.com/MedievalDev/Tw1mp'),
+    ('GitHub — Dialog & Quest Creator', 'https://github.com/MedievalDev/TW1_DialogAndQuestCreator'),
+    ('Discord', 'https://discord.gg/Avdqka8wEE'),
+)
+
+
+def dark_titlebar(window):
+    """Dark title bar on Windows.
+
+    Immersive dark mode alone loses against the user's "accent colour on
+    title bars" setting, so the caption colour is set explicitly too
+    (Windows 11 22000+); both calls are no-ops on older builds.
+    """
+    try:
+        import ctypes
+        window.update_idletasks()
+        hwnd = ctypes.windll.user32.GetParent(window.winfo_id())
+        dwm = ctypes.windll.dwmapi
+        flag = ctypes.c_int(1)
+        for attr in (20, 19):        # DWMWA_USE_IMMERSIVE_DARK_MODE, pre-20H1
+            if dwm.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(flag),
+                                         ctypes.sizeof(flag)) == 0:
+                break
+        def bgr(hex_colour):
+            r, g, b = (int(hex_colour[i:i + 2], 16) for i in (1, 3, 5))
+            return ctypes.c_int(b << 16 | g << 8 | r)
+        for attr, colour in ((35, _PANEL), (36, _INK)):   # caption, text
+            value = bgr(colour)
+            dwm.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(value),
+                                      ctypes.sizeof(value))
+    except Exception:
+        pass
+
+
+def apply_dark_theme(root):
+    """Style every ttk widget class plus the tk option database so all
+    windows (including later Toplevels) come up dark."""
+    root.configure(background=_BG)
+    dark_titlebar(root)
+    style = ttk.Style(root)
+    style.theme_use('clam')
+    style.configure('.', background=_BG, foreground=_INK,
+                    bordercolor=_LINE, darkcolor=_BG, lightcolor=_BG,
+                    troughcolor=_PANEL, fieldbackground=_FIELD,
+                    selectbackground=_SEL, selectforeground=_GOLD_HI,
+                    insertcolor=_INK, font=('Segoe UI', 9))
+    style.configure('TLabelframe', bordercolor=_LINE)
+    style.configure('TLabelframe.Label', foreground=_GOLD)
+    style.configure('TButton', background=_PANEL, padding=(12, 5),
+                    borderwidth=1, focusthickness=1, focuscolor=_LINE)
+    style.map('TButton',
+              background=[('pressed', _SEL), ('active', '#282219')],
+              foreground=[('disabled', '#5c564c')])
+    style.configure('Accent.TButton', background=_GOLD, foreground='#17130b')
+    style.map('Accent.TButton',
+              background=[('pressed', '#b88d3c'),
+                          ('active', _GOLD_HI), ('disabled', '#6d5b31')],
+              foreground=[('disabled', '#3a3226')])
+    style.configure('TNotebook', bordercolor=_LINE, tabmargins=(8, 6, 8, 0))
+    style.configure('TNotebook.Tab', background=_PANEL, foreground=_MUT,
+                    padding=(16, 6), bordercolor=_LINE)
+    style.map('TNotebook.Tab',
+              background=[('selected', _BG)],
+              foreground=[('selected', _GOLD)])
+    style.configure('Treeview', background=_FIELD, fieldbackground=_FIELD,
+                    rowheight=22, bordercolor=_LINE)
+    style.map('Treeview', background=[('selected', _SEL)],
+              foreground=[('selected', _GOLD_HI)])
+    style.configure('Treeview.Heading', background=_PANEL, foreground=_MUT,
+                    bordercolor=_LINE, relief='flat', padding=(6, 4))
+    style.map('Treeview.Heading', background=[('active', '#282219')])
+    for cls in ('TCheckbutton', 'TRadiobutton'):
+        style.configure(cls, indicatorbackground=_FIELD,
+                        indicatorforeground=_GOLD)
+        style.map(cls, background=[('active', _BG)])
+    # Read-only comboboxes otherwise render their text in the *selection*
+    # colours, which on a dark theme means dark-on-dark.
+    style.configure('TCombobox', arrowcolor=_MUT, foreground=_INK,
+                    fieldbackground=_FIELD, background=_PANEL,
+                    selectbackground=_FIELD, selectforeground=_INK,
+                    bordercolor=_LINE, padding=(6, 3))
+    style.map('TCombobox',
+              fieldbackground=[('readonly', _FIELD), ('disabled', _PANEL)],
+              foreground=[('readonly', _INK), ('disabled', '#5c564c')],
+              selectbackground=[('readonly', _FIELD)],
+              selectforeground=[('readonly', _INK)],
+              arrowcolor=[('active', _GOLD)])
+    style.configure('TSpinbox', arrowcolor=_MUT, fieldbackground=_FIELD,
+                    foreground=_INK, bordercolor=_LINE)
+    for cls in ('Vertical.TScrollbar', 'Horizontal.TScrollbar'):
+        style.configure(cls, background=_PANEL, troughcolor=_BG,
+                        bordercolor=_BG, arrowcolor=_MUT,
+                        darkcolor=_PANEL, lightcolor=_PANEL,
+                        gripcount=0, relief='flat', arrowsize=13)
+        style.map(cls, background=[('active', '#3a3226')],
+                  arrowcolor=[('active', _GOLD)])
+    style.configure('Brand.TLabel', foreground=_GOLD,
+                    font=('Georgia', 12, 'bold'))
+    # Themed stand-in for the native menu bar, which Windows always draws
+    # light and which no ttk style can reach.
+    style.configure('Menubar.TFrame', background=_PANEL)
+    style.configure('Menubar.TLabel', background=_PANEL, foreground=_MUT,
+                    padding=(12, 5))
+    style.map('Menubar.TLabel', background=[('active', _SEL)],
+              foreground=[('active', _GOLD_HI)])
+    style.configure('Sash.TPanedwindow', background=_BG)
+    # tk (non-ttk) widgets created from here on
+    for pattern, value in (
+            ('*Text.background', '#0f0d0a'), ('*Text.foreground', _INK),
+            ('*Text.insertBackground', _INK),
+            ('*Text.selectBackground', _SEL),
+            ('*Text.borderWidth', 0), ('*Text.highlightThickness', 0),
+            ('*Listbox.background', _FIELD), ('*Listbox.foreground', _INK),
+            ('*Listbox.selectBackground', _SEL),
+            ('*Menu.background', _PANEL), ('*Menu.foreground', _INK),
+            ('*Menu.activeBackground', _SEL),
+            ('*Menu.activeForeground', _GOLD_HI),
+            ('*Menu.borderWidth', 0),
+            ('*TCombobox*Listbox.background', _FIELD),
+            ('*TCombobox*Listbox.foreground', _INK),
+            ('*TCombobox*Listbox.selectBackground', _SEL),
+            ('*Toplevel.background', _BG)):
+        root.option_add(pattern, value)
 
 # Item list tabs: (label, chardata category key; None means "everything").
 _ITEM_TABS = (('All', None), ('Weapons', 'weapon'), ('Armour', 'armour'),
@@ -276,6 +415,7 @@ class MainWindow:
         self.root.geometry('900x620')
         self.root.minsize(720, 480)
         self.root.protocol('WM_DELETE_WINDOW', self.on_close)
+        apply_dark_theme(self.root)
 
         self._build()
         self.apply_mode()
@@ -303,25 +443,31 @@ class MainWindow:
     # -- construction ---------------------------------------------------
 
     def _build(self):
-        bar = ttk.Frame(self.root, padding=(10, 8))
+        self._build_menubar()
+
+        bar = ttk.Frame(self.root, padding=(12, 10))
         bar.pack(fill='x')
 
-        self.lbl_dot = tk.Label(bar, text='●', fg=_COL_OFF,
+        ttk.Label(bar, text='TW1MP', style='Brand.TLabel').pack(
+            side='left', padx=(0, 14))
+        self.lbl_dot = tk.Label(bar, text='●', fg=_COL_OFF, bg=_BG,
                                 font=('Segoe UI', 14))
         self.lbl_dot.pack(side='left')
         self.lbl_status = ttk.Label(bar, text='Stopped',
                                     font=('Segoe UI', 10, 'bold'))
         self.lbl_status.pack(side='left', padx=(6, 16))
-        self.lbl_info = ttk.Label(bar, text='')
+        self.lbl_info = ttk.Label(bar, text='', foreground=_MUT)
         self.lbl_info.pack(side='left')
 
         self.btn_tray = ttk.Button(bar, text='To tray',
                                    command=self.hide_window)
         self.btn_tray.pack(side='right')
         self.btn_toggle = ttk.Button(bar, text='Start server',
+                                     style='Accent.TButton',
                                      command=self.toggle_server)
         self.btn_toggle.pack(side='right', padx=6)
         self.btn_game = ttk.Button(bar, text='Start game',
+                                   style='Accent.TButton',
                                    command=self.start_game)
         self.btn_game.pack(side='right')
         self.btn_files = ttk.Button(bar, text='Files ▾',
@@ -1134,9 +1280,69 @@ class MainWindow:
 
     # -- game files ------------------------------------------------------
 
-    def show_files_menu(self):
-        game_dir = gamelang.find_game_dir()
+    def _build_menubar(self):
+        bar = ttk.Frame(self.root, style='Menubar.TFrame')
+        bar.pack(fill='x')
+        for label, filler in (('File', self._fill_file_menu),
+                              ('Server', self._fill_server_menu),
+                              ('Links', self._fill_links_menu),
+                              ('Help', self._fill_help_menu)):
+            item = ttk.Label(bar, text=label, style='Menubar.TLabel')
+            item.pack(side='left')
+            item.bind('<Button-1>',
+                      lambda ev, f=filler, w=item: self._popup_menu(f, w))
+            item.bind('<Enter>', lambda ev, w=item: w.state(['active']))
+            item.bind('<Leave>', lambda ev, w=item: w.state(['!active']))
+        ttk.Frame(self.root, height=1, style='Menubar.TFrame').pack(fill='x')
+
+    def _popup_menu(self, filler, widget):
         menu = tk.Menu(self.root, tearoff=0)
+        filler(menu)
+        try:
+            menu.tk_popup(widget.winfo_rootx(),
+                          widget.winfo_rooty() + widget.winfo_height())
+        finally:
+            menu.grab_release()
+
+    def _fill_links_menu(self, menu):
+        for label, url in _LINKS:
+            menu.add_command(label=label,
+                             command=lambda u=url: webbrowser.open(u))
+
+    def _fill_help_menu(self, menu):
+        menu.add_command(label='About TW1MP…', command=self.show_about)
+
+    def _fill_file_menu(self, menu):
+        self._add_file_entries(menu)
+        menu.add_separator()
+        menu.add_command(label='Exit', command=self.on_close)
+
+    def _fill_server_menu(self, menu):
+        running = self.controller.running
+        menu.add_command(
+            label='Stop server' if running else 'Start server',
+            command=self.toggle_server)
+        menu.add_command(label='Start game', command=self.start_game)
+        menu.add_separator()
+        menu.add_command(label='To tray', command=self.hide_window,
+                         state='normal' if self.has_tray else 'disabled')
+        menu.add_command(
+            label='Back to client view' if self.admin_mode else 'Admin mode…',
+            command=self.toggle_admin_mode)
+
+    def show_about(self):
+        messagebox.showinfo(
+            'About TW1MP',
+            f'TW1MP Lobby Server {__version__}\n\n'
+            'Community multiplayer server for Two Worlds (2007).\n'
+            'Free and open source, built by MedievalDev.\n\n'
+            'Website:  https://twmp.alchemy-fox.de\n'
+            'GitHub:   https://github.com/MedievalDev/Tw1mp\n'
+            'Quests:   https://alchemy-fox.de/game/TW1_DialogAndQuestCreator')
+
+    def _add_file_entries(self, menu):
+        """Shared entries of the File menu and the Files ▾ button."""
+        game_dir = gamelang.find_game_dir()
         if game_dir:
             menu.add_command(label='Game folder',
                              command=lambda: self._open_path(game_dir))
@@ -1162,6 +1368,10 @@ class MainWindow:
             menu.add_command(label='PlayerData',
                              command=lambda: self._open_path(
                                  os.path.join(self.root_dir, 'PlayerData')))
+
+    def show_files_menu(self):
+        menu = tk.Menu(self.root, tearoff=0)
+        self._add_file_entries(menu)
         try:
             x = self.btn_files.winfo_rootx()
             y = self.btn_files.winfo_rooty() + self.btn_files.winfo_height()
