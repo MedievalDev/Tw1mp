@@ -220,7 +220,79 @@ async function loadAccounts() {
   try { renderAccounts(await getJSON('accounts')); } catch (e) {}
 }
 
-// ---- character view -------------------------------------------------
+// ---- guilds ---------------------------------------------------------
+let guildNames = [];
+
+async function loadGuilds() {
+  let data;
+  try { data = await getJSON('guilds'); } catch (e) { return; }
+  const guilds = data.guilds || [];
+  guildNames = guilds.map((g) => g.name);
+
+  setBody('guilds', guilds.map((g) => {
+    const tr = document.createElement('tr');
+    tr.append(td(g.name, 'name'), td(g.tag || '—'),
+              td(g.members.length), td(g.online || 0),
+              td(fmtDateTime(g.founded)));
+    if (ADMIN) {
+      const cell = document.createElement('td');
+      cell.className = 'actions admin-only';
+      cell.appendChild(button('Auflösen', 'danger', () => {
+        if (confirm('Gilde "' + g.name + '" wirklich auflösen?')) {
+          act(() => postJSON('admin/guild/delete', { guild: g.name }), loadGuilds);
+        }
+      }));
+      tr.append(cell);
+    }
+    return tr;
+  }));
+  $('#guilds-empty').style.display = guilds.length ? 'none' : 'block';
+
+  // one row per player with a guild dropdown
+  const assigned = [];
+  guilds.forEach((g) => g.members.forEach((m) => assigned.push([m, g.name])));
+  (data.unassigned || []).forEach((m) => assigned.push([m, '']));
+  assigned.sort((a, b) => a[0].localeCompare(b[0]));
+
+  setBody('members', assigned.map(([player, guild]) => {
+    const tr = document.createElement('tr');
+    const cell = document.createElement('td');
+    if (ADMIN) {
+      const sel = document.createElement('select');
+      sel.className = 'qty';
+      sel.style.width = '160px';
+      const none = document.createElement('option');
+      none.value = ''; none.textContent = '— keine —';
+      sel.appendChild(none);
+      guildNames.forEach((n) => {
+        const o = document.createElement('option');
+        o.value = n; o.textContent = n;
+        sel.appendChild(o);
+      });
+      sel.value = guild;
+      sel.addEventListener('change', () => act(
+        () => postJSON('admin/guild/member', { name: player, guild: sel.value }),
+        loadGuilds));
+      cell.appendChild(sel);
+    } else {
+      cell.textContent = guild || '—';
+    }
+    tr.append(td(player, 'name'), cell);
+    return tr;
+  }));
+}
+
+function createGuild() {
+  const name = $('#g-name').value.trim();
+  if (!name) { toast('Gildenname fehlt.', true); return; }
+  act(() => postJSON('admin/guild/create', {
+    guild: name, tag: $('#g-tag').value.trim(),
+  }), () => { $('#g-name').value = ''; $('#g-tag').value = ''; loadGuilds(); });
+}
+
+// ---- character view / item editor -----------------------------------
+let charState = { name: null, form: null, edits: {} };
+
 async function showCharacter(name) {
   $$('nav button').forEach((x) => x.classList.remove('active'));
   $$('.tab').forEach((x) => x.classList.remove('active'));
@@ -229,16 +301,37 @@ async function showCharacter(name) {
   $('#char-meta').textContent = 'lädt…';
   setBody('charitems', []);
   $('#char-empty').style.display = 'none';
+  charState = { name: name, form: null, edits: {} };
   try {
     const c = await getJSON('character?name=' + encodeURIComponent(name));
     const items = c.items || [];
+    charState.form = c.form;
     $('#char-meta').textContent = c.form
       ? `Map: ${c.form} · ${(c.size / 1024).toFixed(1)} KB · ${items.length} Einträge`
+        + (c.modded ? ' · bearbeitete Kopie aktiv' : '')
       : (c.note || 'kein Charakter');
     setBody('charitems', items.map((it) => {
       const tr = document.createElement('tr');
-      tr.append(td(it.name, 'name'), td(it.category),
-                td(it.quantity),
+      const value = document.createElement('td');
+      if (ADMIN && it.editable) {
+        const input = document.createElement('input');
+        input.className = 'qty';
+        input.type = 'number';
+        input.min = '0';
+        input.max = String(it.max);
+        input.value = it.quantity;
+        input.addEventListener('input', () => {
+          const v = parseInt(input.value, 10);
+          const changed = !isNaN(v) && v !== it.quantity;
+          input.classList.toggle('dirty', changed);
+          if (changed) charState.edits[it.offset] = v;
+          else delete charState.edits[it.offset];
+        });
+        value.appendChild(input);
+      } else {
+        value.textContent = it.quantity;
+      }
+      tr.append(td(it.name, 'name'), td(it.category), value,
                 td(it.kind === 'class' ? 'Klasse' : 'Anzahl'));
       return tr;
     }));
@@ -246,6 +339,24 @@ async function showCharacter(name) {
   } catch (e) {
     $('#char-meta').textContent = 'Fehler: ' + (e.message || e);
   }
+}
+
+function saveCharacter() {
+  const n = Object.keys(charState.edits).length;
+  if (!charState.name || !charState.form) return;
+  if (!n) { toast('Nichts geändert.'); return; }
+  act(() => postJSON('admin/item', {
+    name: charState.name, form: charState.form, changes: charState.edits,
+  }), () => showCharacter(charState.name));
+}
+
+function revertCharacter() {
+  if (!charState.name || !charState.form) return;
+  if (!confirm('Alle Änderungen an ' + charState.name
+               + ' verwerfen und das Original wieder aktivieren?')) return;
+  act(() => postJSON('admin/character/revert', {
+    name: charState.name, form: charState.form,
+  }), () => showCharacter(charState.name));
 }
 
 function renderLog(d) {
@@ -271,7 +382,10 @@ async function poll() {
   if (ok) {
     try { renderLive(await getJSON('debug?lists=player+town+game')); } catch (e) {}
     try { renderLog(await getJSON('log')); } catch (e) {}
-    if (tick % 5 === 0) { try { renderAccounts(await getJSON('accounts')); } catch (e) {} }
+    if (tick % 5 === 0) {
+      await loadAccounts();
+      if ($('#tab-guilds').classList.contains('active')) await loadGuilds();
+    }
     $('#updated').textContent = 'Aktualisiert ' + new Date().toLocaleTimeString();
   } else {
     $('#updated').textContent = 'Keine Verbindung – läuft der SSH-Tunnel?';
@@ -288,10 +402,17 @@ $$('nav button').forEach((b) => b.addEventListener('click', () => {
   $$('.tab').forEach((x) => x.classList.remove('active'));
   b.classList.add('active');
   $('#tab-' + b.dataset.tab).classList.add('active');
+  if (b.dataset.tab === 'guilds') loadGuilds();
 }));
+$('#g-create').addEventListener('click', createGuild);
+$('#g-name').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') createGuild();
+});
 $('#acc-filter').addEventListener('input', applyAccountFilter);
 $('#autorefresh').addEventListener('change', (e) => (e.target.checked ? start() : stop()));
 
+$('#char-save').addEventListener('click', saveCharacter);
+$('#char-revert').addEventListener('click', revertCharacter);
 $('#char-back').addEventListener('click', () => {
   $('#tab-char').classList.remove('active');
   const btn = document.querySelector('nav button[data-tab="accounts"]');

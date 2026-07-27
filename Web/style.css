@@ -90,7 +90,13 @@ td.name { font-weight: 600; }
 /* admin controls (hidden unless the server enables the admin API) */
 body:not(.admin) .admin-only { display: none !important; }
 
-#broadcast-bar { display: flex; gap: 8px; margin-bottom: 16px; }
+#broadcast-bar, #guild-bar { display: flex; gap: 8px; margin-bottom: 16px; }
+#g-name { width: 220px; }
+#g-tag { width: 90px; }
+#g-name, #g-tag {
+  background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+  border-radius: 6px; padding: 8px 12px; font-size: 13px;
+}
 #bc-text {
   flex: 1; background: var(--panel2); border: 1px solid var(--line);
   color: var(--text); border-radius: 6px; padding: 8px 12px; font-size: 13px;
@@ -105,6 +111,17 @@ body:not(.admin) .admin-only { display: none !important; }
 .btn.danger:hover { background: rgba(248,81,73,.15); border-color: var(--red); color: var(--red); }
 .btn + .btn { margin-left: 6px; }
 td.actions { white-space: nowrap; }
+
+#char-actions { margin-top: 14px; }
+#char-actions .muted { margin: 8px 0 0; max-width: 640px; }
+input.qty {
+  width: 84px; background: var(--panel2); border: 1px solid var(--line);
+  color: var(--text); border-radius: 5px; padding: 3px 8px; font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+input.qty:focus { outline: none; border-color: var(--gold); }
+input.qty.dirty { border-color: var(--gold); color: var(--gold); }
+.badge.mod { background: rgba(255,200,60,.15); color: var(--gold); }
 
 #toast {
   position: fixed; left: 50%; bottom: 46px; transform: translateX(-50%);

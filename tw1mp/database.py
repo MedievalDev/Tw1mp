@@ -32,6 +32,15 @@ _SQLINIT_dbFormTable = 'CREATE TABLE formTable(form UNIQUE)'
 _SQLINIT_dbBannedTable = ('CREATE TABLE IF NOT EXISTS bannedTable('
                           'kind TEXT, value TEXT, ts TIMESTAMP, reason TEXT, '
                           'UNIQUE(kind, value))')
+# Guilds are this server's own concept - the game protocol carries no guild
+# membership, so the roster lives here and is managed from the panel.
+# One guild per player, hence the UNIQUE username.
+_SQLINIT_dbGuildTable = ('CREATE TABLE IF NOT EXISTS guildTable('
+                         'name TEXT UNIQUE, tag TEXT, founded TIMESTAMP, '
+                         'note TEXT)')
+_SQLINIT_dbGuildMemberTable = ('CREATE TABLE IF NOT EXISTS guildMemberTable('
+                               'username TEXT UNIQUE, guild TEXT, '
+                               'joined TIMESTAMP)')
 
 _SQL_userID = 'SELECT rowid FROM userTable WHERE username = ?'
 _SQL_userID_Schk = 'SELECT rowid FROM userTable WHERE serial = ?'
@@ -100,6 +109,8 @@ class Database:
         # Auxiliary tables that aren't part of the versioned TW1CS schema are
         # created idempotently so an existing database gains them in place.
         cur.execute(_SQLINIT_dbBannedTable)
+        cur.execute(_SQLINIT_dbGuildTable)
+        cur.execute(_SQLINIT_dbGuildMemberTable)
         self.db.commit()
         cur.close()
 
@@ -387,6 +398,95 @@ class Database:
                     'ORDER BY ts DESC').fetchall()]
             finally:
                 cur.close()
+
+    # -- guilds -------------------------------------------------------
+    #
+    # Not part of the game protocol: Two Worlds' lobby carries no guild
+    # membership, so this server keeps its own roster and the panel manages
+    # it. A player belongs to at most one guild.
+
+    def create_guild(self, name, tag='', note=''):
+        name = str(name).strip()
+        if not name:
+            return False
+        with self.lock:
+            cur = self.db.cursor()
+            try:
+                cur.execute('INSERT INTO guildTable VALUES (?,?,?,?)',
+                            (name, str(tag).strip(), datetime.datetime.now(),
+                             str(note).strip()))
+                self.db.commit()
+                return True
+            except sqlite3.IntegrityError:
+                return False          # a guild by that name already exists
+            finally:
+                cur.close()
+
+    def delete_guild(self, name):
+        with self.lock:
+            cur = self.db.cursor()
+            try:
+                cur.execute('DELETE FROM guildMemberTable WHERE guild = ?',
+                            (name,))
+                cur.execute('DELETE FROM guildTable WHERE name = ?', (name,))
+                self.db.commit()
+                return cur.rowcount > 0
+            finally:
+                cur.close()
+
+    def set_member_guild(self, username, guild):
+        """Put a player in a guild, or remove them when guild is falsy."""
+        with self.lock:
+            cur = self.db.cursor()
+            try:
+                if not guild:
+                    cur.execute('DELETE FROM guildMemberTable '
+                                'WHERE username = ?', (username,))
+                else:
+                    row = cur.execute('SELECT 1 FROM guildTable WHERE name = ?',
+                                      (guild,)).fetchone()
+                    if row is None:
+                        return False       # unknown guild
+                    cur.execute('INSERT OR REPLACE INTO guildMemberTable '
+                                'VALUES (?,?,?)',
+                                (username, guild, datetime.datetime.now()))
+                self.db.commit()
+                return True
+            finally:
+                cur.close()
+
+    def member_guilds(self):
+        """username -> guild name, for every player in a guild."""
+        with self.lock:
+            cur = self.db.cursor()
+            try:
+                return {row[0]: row[1] for row in cur.execute(
+                    'SELECT username, guild FROM guildMemberTable').fetchall()}
+            finally:
+                cur.close()
+
+    def guild_standings(self):
+        """All guilds with their members, as a list of dicts."""
+        with self.lock:
+            cur = self.db.cursor()
+            try:
+                guilds = cur.execute(
+                    'SELECT name, tag, founded, note FROM guildTable '
+                    'ORDER BY name COLLATE NOCASE').fetchall()
+                members = cur.execute(
+                    'SELECT guild, username FROM guildMemberTable '
+                    'ORDER BY username COLLATE NOCASE').fetchall()
+            finally:
+                cur.close()
+        by_guild = {}
+        for guild, username in members:
+            by_guild.setdefault(guild, []).append(username)
+        return [{'name': n, 'tag': t or '',
+                 'founded': f.isoformat() if hasattr(f, 'isoformat') else
+                 (str(f) if f else None),
+                 'note': note or '',
+                 'members': by_guild.get(n, [])}
+                for (n, t, f, note) in guilds]
 
     def list_forms(self):
         """Every character form (map) the server has seen, as [form, ...]."""

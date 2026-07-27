@@ -24,6 +24,7 @@
 <nav>
   <button data-tab="live" class="active">Live</button>
   <button data-tab="accounts">Accounts</button>
+  <button data-tab="guilds">Gilden</button>
   <button data-tab="log">Log</button>
 </nav>
 
@@ -73,6 +74,27 @@
     <p id="bans-empty" class="empty">Keine Bans.</p>
   </section>
 
+  <section id="tab-guilds" class="tab">
+    <div class="admin-only" id="guild-bar">
+      <input id="g-name" placeholder="Gildenname" autocomplete="off">
+      <input id="g-tag" placeholder="Tag" autocomplete="off" maxlength="8">
+      <button id="g-create" class="btn primary">Gilde anlegen</button>
+    </div>
+
+    <h2>Gilden</h2>
+    <table id="guilds">
+      <thead><tr><th>Gilde</th><th>Tag</th><th>Mitglieder</th><th>online</th><th>gegründet</th><th class="admin-only">Aktion</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p id="guilds-empty" class="empty">Noch keine Gilden angelegt.</p>
+
+    <h2>Mitglieder zuordnen</h2>
+    <table id="members">
+      <thead><tr><th>Spieler</th><th>Gilde</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
   <section id="tab-char" class="tab">
     <div class="rowbar">
       <h2>Charakter <span id="char-name" class="muted"></span></h2>
@@ -84,6 +106,13 @@
       <tbody></tbody>
     </table>
     <p id="char-empty" class="empty">Kein Charakter gespeichert.</p>
+    <div class="admin-only" id="char-actions">
+      <button id="char-save" class="btn primary">Änderungen speichern</button>
+      <button id="char-revert" class="btn danger">Änderungen verwerfen</button>
+      <p class="muted">Bearbeitungen landen in einer Kopie — das Original des
+        Spielers wird nie überschrieben. Der Server liefert die Kopie nur aus,
+        wenn der Spieler allein online ist.</p>
+    </div>
   </section>
 
   <section id="tab-log" class="tab">

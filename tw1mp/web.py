@@ -163,6 +163,21 @@ class WebApiServe(http.server.BaseHTTPRequestHandler):
             self._send_json({'lines': list(_LOG_BUFFER)})
             return
 
+        if path == 'guilds':
+            if not cfg.web_debug_api:
+                self._send_error_json('Guild API is disabled', 403)
+                return
+            online = set(core.debug_dict_players())
+            guilds = core.db.guild_standings()
+            for g in guilds:
+                g['online'] = sum(1 for m in g['members'] if m in online)
+            self._send_json({'guilds': guilds,
+                             'unassigned': sorted(
+                                 name for name, _ in core.db.list_users()
+                                 if name not in core.db.member_guilds()
+                                 and name != cfg.bot_name)})
+            return
+
         if path == 'capabilities':
             self._send_json({'debug': bool(cfg.web_debug_api),
                              'admin': bool(cfg.web_admin_api)})
@@ -180,27 +195,35 @@ class WebApiServe(http.server.BaseHTTPRequestHandler):
             want = qprops.get('form')
             blob = b''
             used = None
+            modded = False
             for form in ([want] if want else forms):
-                blob = core.db.get_playerdata(name, form)
+                # Show (and edit) the modified variant when one exists, the
+                # way the desktop panel does.
+                mod = core.db.has_modded_playerdata(name, form)
+                blob = core.db.get_playerdata(name, form, modded=mod)
                 if blob:
-                    used = form
+                    used, modded = form, mod
                     break
             if not blob:
                 self._send_json({'name': name, 'forms': forms, 'form': None,
-                                 'items': [], 'note': 'no character stored'})
+                                 'items': [], 'modded': False,
+                                 'note': 'no character stored'})
                 return
             from . import chardata
             try:
                 raw = chardata.decompress(blob)
                 items = [{'name': s.name, 'quantity': s.quantity,
+                          'offset': s.qty_offset,
                           'kind': s.kind, 'editable': s.editable,
+                          'max': s.max_value,
                           'category': chardata.category(s.name)}
                          for s in chardata.parse_items(raw)]
             except chardata.CharDataError as exc:
                 self._send_error_json(f'unreadable character: {exc}', 500)
                 return
             self._send_json({'name': name, 'forms': forms, 'form': used,
-                             'size': len(blob), 'items': items})
+                             'size': len(blob), 'modded': modded,
+                             'items': items})
             return
 
         if path == 'playerdata':
@@ -314,6 +337,93 @@ class WebApiServe(http.server.BaseHTTPRequestHandler):
             self._send_json({'ok': True, 'kicked': kicked,
                              'message': f'{name} gebannt (Name + Serial)'
                              + (' und gekickt.' if kicked else '.')})
+            return
+
+        if path == 'admin/item':
+            # Edits land in the modified variant next to the original, which
+            # the server only ever serves to a player alone on it - the
+            # untouched character can never be lost to an edit.
+            form = str(body.get('form') or '')
+            changes = body.get('changes') or {}
+            if not name or not form or not isinstance(changes, dict) \
+                    or not changes:
+                self._send_error_json('name, form and changes required', 400)
+                return
+            from . import chardata
+            db = core.db
+            was_modded = db.has_modded_playerdata(name, form)
+            blob = db.get_playerdata(name, form, modded=was_modded)
+            if not blob:
+                self._send_error_json('no character stored', 404)
+                return
+            try:
+                parsed = {int(k): int(v) for k, v in changes.items()}
+                newblob = chardata.edit_quantities(blob, parsed)
+            except (ValueError, TypeError) as exc:
+                self._send_error_json(f'bad changes: {exc}', 400)
+                return
+            except chardata.CharDataError as exc:
+                self._send_error_json(str(exc), 400)
+                return
+            if not db.set_playerdata(name, form, newblob, modded=True):
+                self._send_error_json('could not store the character', 500)
+                return
+            log.info('Edited %d item(s) of %s via the dashboard',
+                     len(parsed), name)
+            self._send_json({'ok': True, 'changed': len(parsed),
+                             'message': f'{len(parsed)} Eintrag(e) geändert '
+                                        '(Original bleibt unangetastet).'})
+            return
+
+        if path == 'admin/character/revert':
+            form = str(body.get('form') or '')
+            if not name or not form:
+                self._send_error_json('name and form required', 400)
+                return
+            ok = core.db.delete_modded_playerdata(name, form)
+            log.info('Reverted the modified character of %s (%s)', name,
+                     'removed' if ok else 'nothing to remove')
+            self._send_json({'ok': ok,
+                             'message': 'Änderungen verworfen, Original ist '
+                             'wieder aktiv.' if ok else
+                             'Es gab keine geänderte Variante.'})
+            return
+
+        if path == 'admin/guild/create':
+            guild = str(body.get('guild') or '').strip()
+            if not guild:
+                self._send_error_json('guild required', 400)
+                return
+            ok = core.db.create_guild(guild, body.get('tag') or '',
+                                      body.get('note') or '')
+            self._send_json({'ok': ok,
+                             'message': f'Gilde "{guild}" angelegt.' if ok else
+                             'Diesen Gildennamen gibt es schon.'})
+            return
+
+        if path == 'admin/guild/delete':
+            guild = str(body.get('guild') or '').strip()
+            if not guild:
+                self._send_error_json('guild required', 400)
+                return
+            ok = core.db.delete_guild(guild)
+            self._send_json({'ok': ok,
+                             'message': f'Gilde "{guild}" aufgelöst.' if ok
+                             else 'Gilde nicht gefunden.'})
+            return
+
+        if path == 'admin/guild/member':
+            guild = str(body.get('guild') or '').strip()
+            if not name:
+                self._send_error_json('name required', 400)
+                return
+            ok = core.db.set_member_guild(name, guild)
+            if not ok:
+                self._send_error_json('unknown guild', 400)
+                return
+            self._send_json({'ok': True,
+                             'message': f'{name} ist jetzt in "{guild}".'
+                             if guild else f'{name} aus der Gilde entfernt.'})
             return
 
         if path == 'admin/unban':
