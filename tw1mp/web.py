@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import socketserver
+import time
 from urllib.parse import unquote, urlparse
 
 from . import __version__
@@ -88,6 +89,19 @@ class WebApiServe(http.server.BaseHTTPRequestHandler):
     def _send_error_json(self, message, code=404):
         self._send_json({'error': message}, code)
 
+    def _send_json_public(self, obj):
+        """A public, read-only payload: adds CORS so the community website can
+        fetch it. Only ever used for the whitelisted /public/* endpoints -
+        never for account, character or admin data."""
+        body = json.dumps(obj).encode('utf-8')
+        self.send_response(200)
+        self.send_header('Content-Type', _MIME_JSON)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
         core = self.server.core
         cfg = core.config
@@ -98,6 +112,41 @@ class WebApiServe(http.server.BaseHTTPRequestHandler):
             for prp in pres.query.split('&'):
                 (k, _, v) = prp.partition('=')
                 qprops[unquote(k)] = unquote(v)
+
+        # -- public, read-only endpoints (for the community website) ------
+        # Whitelisted subset only: guilds and ranking. No account roster, no
+        # character data, no last-login/ban info. Safe to expose publicly.
+        if path == 'public/guilds':
+            online = set(core.debug_dict_players())
+            guilds = [{'name': g['name'], 'tag': g['tag'],
+                       'founded': g['founded'], 'members': g['members'],
+                       'memberCount': len(g['members']),
+                       'online': sum(1 for m in g['members'] if m in online)}
+                      for g in core.db.guild_standings()]
+            self._send_json_public({'guilds': guilds,
+                                    'generated': _iso_utc(time.time())})
+            return
+
+        if path == 'public/ranking':
+            # The character blob has no readable XP/gold field yet, so there
+            # is nothing real to rank on. Kept as a stable shape the website
+            # can already consume; filled once the fields are identified.
+            self._send_json_public({'available': False,
+                                    'note': 'Rangliste wird vorbereitet.',
+                                    'players': [],
+                                    'generated': _iso_utc(time.time())})
+            return
+
+        if path == 'public/summary':
+            with core.state.lock:
+                players = sum(1 for n in core.state.activeUsers
+                              if n != cfg.bot_name)
+            self._send_json_public({
+                'server': cfg.title,
+                'playersOnline': players,
+                'guilds': len(core.db.guild_standings()),
+                'generated': _iso_utc(time.time())})
+            return
 
         if path == 'status':
             with core.state.lock:
@@ -462,3 +511,32 @@ class WebApiServe(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
         return True
+
+
+class PublicApiServe(WebApiServe):
+    """Internet-facing handler: serves only the whitelisted read-only
+    /public/* endpoints and refuses everything else. The admin, account and
+    character surface stays on the private (localhost) [Web] port."""
+
+    _PUBLIC = ('public/guilds', 'public/ranking', 'public/summary')
+
+    def do_GET(self):
+        path = unquote(urlparse(self.path).path).strip('/').lower()
+        if path in self._PUBLIC:
+            return super().do_GET()
+        self._send_error_json('not found', 404)
+
+    def do_POST(self):
+        self._send_error_json('method not allowed', 405)
+
+
+class PublicWebServer(socketserver.ThreadingTCPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def __init__(self, core):
+        _install_log_capture()
+        log.info('Public data server starting on 0.0.0.0 port %s',
+                 core.config.public_port)
+        super().__init__(('0.0.0.0', core.config.public_port), PublicApiServe)
+        self.core = core

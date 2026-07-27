@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gilden &amp; Rangliste — TW1MP</title>
+<style>
+  :root{--bg:#0e0b07;--panel:#1a140d;--panel2:#241b11;--line:#3a2c1a;
+        --text:#e8dcc8;--muted:#a08a6a;--gold:#e8b24c;--green:#5fbf6a;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:15px/1.5 "Segoe UI",system-ui,sans-serif}
+  .wrap{max-width:960px;margin:0 auto;padding:32px 20px 60px}
+  h1{font-size:26px;margin:0 0 4px;color:var(--gold);letter-spacing:.5px}
+  h2{font-size:14px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);
+     margin:34px 0 12px;border-bottom:1px solid var(--line);padding-bottom:6px}
+  .status{color:var(--muted);font-size:14px;margin-bottom:8px}
+  .status b{color:var(--text)}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;
+       background:#8a5a2a;margin-right:6px;vertical-align:middle}
+  .dot.on{background:var(--green);box-shadow:0 0 8px var(--green)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+  .card h3{margin:0 0 2px;font-size:17px;color:var(--gold)}
+  .card .tag{display:inline-block;background:var(--panel2);color:var(--muted);
+             border:1px solid var(--line);border-radius:5px;padding:1px 7px;
+             font-size:12px;font-weight:600;margin-left:6px}
+  .card .meta{color:var(--muted);font-size:13px;margin:6px 0 10px}
+  .card .meta .on{color:var(--green)}
+  .members{display:flex;flex-wrap:wrap;gap:5px}
+  .members span{background:var(--panel2);border-radius:5px;padding:2px 8px;font-size:13px}
+  .empty{color:var(--muted);font-style:italic}
+  .note{color:var(--muted);background:var(--panel);border:1px dashed var(--line);
+        border-radius:10px;padding:16px}
+  footer{margin-top:40px;color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Gilden &amp; Rangliste</h1>
+  <p class="status" id="status"><span class="dot" id="dot"></span>lädt…</p>
+
+  <h2>Gilden</h2>
+  <div class="grid" id="guilds"></div>
+  <p class="empty" id="guilds-empty" style="display:none">Noch keine Gilden gegründet.</p>
+
+  <h2>Rangliste</h2>
+  <div id="ranking"></div>
+
+  <footer id="foot"></footer>
+</div>
+
+<script>
+(function () {
+  var esc = function (s) { var d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; };
+
+  function render(data) {
+    var dot = document.getElementById('dot');
+    var status = document.getElementById('status');
+    if (!data || !data.ok) {
+      dot.className = 'dot';
+      status.innerHTML = '<span class="dot"></span>Server gerade nicht erreichbar.';
+      return;
+    }
+    var s = data.summary || {};
+    dot.className = 'dot on';
+    status.innerHTML = '<span class="dot on"></span><b>' + esc(s.server || 'TW1MP') +
+      '</b> — ' + (s.playersOnline || 0) + ' online · ' + (s.guilds || 0) + ' Gilden';
+
+    var guilds = data.guilds || [];
+    var box = document.getElementById('guilds');
+    box.innerHTML = guilds.map(function (g) {
+      var members = (g.members || []).map(function (m) { return '<span>' + esc(m) + '</span>'; }).join('');
+      var online = g.online ? ' · <span class="on">' + g.online + ' online</span>' : '';
+      return '<div class="card"><h3>' + esc(g.name) +
+        (g.tag ? '<span class="tag">' + esc(g.tag) + '</span>' : '') + '</h3>' +
+        '<div class="meta">' + (g.memberCount || 0) + ' Mitglieder' + online + '</div>' +
+        '<div class="members">' + (members || '<span class="empty">—</span>') + '</div></div>';
+    }).join('');
+    document.getElementById('guilds-empty').style.display = guilds.length ? 'none' : 'block';
+
+    var r = data.ranking || {};
+    var rank = document.getElementById('ranking');
+    if (!r.available) {
+      rank.innerHTML = '<div class="note">' + esc(r.note || 'Die Rangliste wird vorbereitet.') + '</div>';
+    } else {
+      var rows = (r.players || []).map(function (p, i) {
+        return '<div class="card"><h3>#' + (i + 1) + ' ' + esc(p.name) + '</h3>' +
+          '<div class="meta">EXP ' + esc(p.xp) + (p.gold != null ? ' · Gold ' + esc(p.gold) : '') + '</div></div>';
+      }).join('');
+      rank.innerHTML = '<div class="grid">' + rows + '</div>';
+    }
+
+    if (data.updated) {
+      document.getElementById('foot').textContent =
+        'Stand: ' + new Date(data.updated).toLocaleString('de-DE');
+    }
+  }
+
+  function load() {
+    fetch('tw1mp-data.php', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(render)
+      .catch(function () { render(null); });
+  }
+  load();
+  setInterval(load, 30000);
+})();
+</script>
+</body>
+</html>

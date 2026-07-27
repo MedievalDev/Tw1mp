@@ -68,6 +68,10 @@ DEFAULTS = {
         'bind': '',
         'debug_api': 'false',
         'playerdata_download': 'false',
+        # Internet-facing read-only data port for the community website
+        # (guilds + ranking only). 0 = off. Serves just /public/* - the admin
+        # API stays on the private [Web] port above.
+        'public_port': '0',
         # Allow the dashboard to act on the server (kick, ban, broadcast) and
         # to read characters. Only enable together with a localhost bind -
         # anyone who can reach the port can use it.
@@ -193,6 +197,7 @@ class Config:
         self.web_playerdata_download = _safe(web.getboolean, 'Web',
                                              'playerdata_download')
         self.web_bind = (web.get('bind') or '').strip()
+        self.public_port = _safe(web.getint, 'Web', 'public_port')
         self.web_admin_api = _safe(web.getboolean, 'Web', 'admin_api')
 
         self.database_path = os.path.join(self.root, 'ServerData.db')

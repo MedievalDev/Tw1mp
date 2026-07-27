@@ -319,6 +319,10 @@ class CoreServer(socketserver.ThreadingTCPServer):
         if config.web_enabled:
             from .web import WebServer
             self.webapi = WebServer(self)
+        self.publicapi = None
+        if getattr(config, 'public_port', 0):
+            from .web import PublicWebServer
+            self.publicapi = PublicWebServer(self)
 
     def getPlayer(self, username):
         with self.state.lock:
@@ -422,6 +426,11 @@ class CoreServer(socketserver.ThreadingTCPServer):
             webThread = threading.Thread(target=self.webapi.serve_forever,
                                          daemon=True)
             webThread.start()
+        publicThread = None
+        if self.publicapi:
+            publicThread = threading.Thread(
+                target=self.publicapi.serve_forever, daemon=True)
+            publicThread.start()
         if self.config.bot_enabled:
             from .adminbot import AdminBot
             self.bot = AdminBot(self)
@@ -438,6 +447,10 @@ class CoreServer(socketserver.ThreadingTCPServer):
                 self.webapi.shutdown()
                 self.webapi.server_close()
                 webThread.join()
+            if self.publicapi:
+                self.publicapi.shutdown()
+                self.publicapi.server_close()
+                publicThread.join()
             distThread.join()
 
     def handle_signal(self, timeout=2):
