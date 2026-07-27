@@ -163,6 +163,46 @@ class WebApiServe(http.server.BaseHTTPRequestHandler):
             self._send_json({'lines': list(_LOG_BUFFER)})
             return
 
+        if path == 'capabilities':
+            self._send_json({'debug': bool(cfg.web_debug_api),
+                             'admin': bool(cfg.web_admin_api)})
+            return
+
+        if path == 'character':
+            if not cfg.web_admin_api:
+                self._send_error_json('Admin API is disabled', 403)
+                return
+            name = qprops.get('name')
+            if not name:
+                self._send_error_json('name parameter required', 400)
+                return
+            forms = core.db.list_forms()
+            want = qprops.get('form')
+            blob = b''
+            used = None
+            for form in ([want] if want else forms):
+                blob = core.db.get_playerdata(name, form)
+                if blob:
+                    used = form
+                    break
+            if not blob:
+                self._send_json({'name': name, 'forms': forms, 'form': None,
+                                 'items': [], 'note': 'no character stored'})
+                return
+            from . import chardata
+            try:
+                raw = chardata.decompress(blob)
+                items = [{'name': s.name, 'quantity': s.quantity,
+                          'kind': s.kind, 'editable': s.editable,
+                          'category': chardata.category(s.name)}
+                         for s in chardata.parse_items(raw)]
+            except chardata.CharDataError as exc:
+                self._send_error_json(f'unreadable character: {exc}', 500)
+                return
+            self._send_json({'name': name, 'forms': forms, 'form': used,
+                             'size': len(blob), 'items': items})
+            return
+
         if path == 'playerdata':
             if not cfg.web_playerdata_download:
                 self._send_error_json('Playerdata download is disabled', 403)
@@ -187,6 +227,109 @@ class WebApiServe(http.server.BaseHTTPRequestHandler):
 
         if not self._send_file(path or 'index.html'):
             self._send_error_json('not found', 404)
+
+    # -- admin actions --------------------------------------------------
+
+    def _admin_allowed(self):
+        """Gate write actions.
+
+        The API is meant to be reached through an SSH tunnel, so the tunnel
+        (and the key behind it) is the authentication. What that does not
+        cover is a web page open in the same browser POSTing to localhost,
+        so require a custom header - which cross-origin JavaScript cannot
+        set without a preflight this server never approves - and reject any
+        foreign Origin outright.
+        """
+        if self.headers.get('X-TW1MP-Admin') != '1':
+            self._send_error_json('missing admin header', 403)
+            return False
+        origin = self.headers.get('Origin')
+        if origin and urlparse(origin).hostname not in ('localhost',
+                                                        '127.0.0.1', '::1'):
+            self._send_error_json('bad origin', 403)
+            return False
+        return True
+
+    def do_POST(self):
+        core = self.server.core
+        cfg = core.config
+        path = unquote(urlparse(self.path).path).strip('/').lower()
+
+        if not cfg.web_admin_api:
+            self._send_error_json('Admin API is disabled', 403)
+            return
+        if not self._admin_allowed():
+            return
+
+        try:
+            length = int(self.headers.get('Content-Length') or 0)
+        except ValueError:
+            length = 0
+        if length < 0 or length > 65536:
+            self._send_error_json('payload too large', 413)
+            return
+        try:
+            body = json.loads(self.rfile.read(length) or b'{}')
+            if not isinstance(body, dict):
+                raise ValueError('expected an object')
+        except (ValueError, UnicodeDecodeError) as exc:
+            self._send_error_json(f'bad json: {exc}', 400)
+            return
+
+        name = str(body.get('name') or '')
+        reason = str(body.get('reason') or '')
+
+        if path == 'admin/broadcast':
+            text = str(body.get('text') or '').strip()
+            if not text:
+                self._send_error_json('text required', 400)
+                return
+            count = core.broadcast(text)
+            self._send_json({'ok': True, 'recipients': count})
+            return
+
+        if path == 'admin/kick':
+            if not name:
+                self._send_error_json('name required', 400)
+                return
+            ok = core.kick(name)
+            self._send_json({'ok': ok,
+                             'message': f'{name} gekickt.' if ok else
+                             f'{name} ist nicht online.'})
+            return
+
+        if path == 'admin/ban':
+            if not name:
+                self._send_error_json('name required', 400)
+                return
+            # Ban the account and its serial key, then drop the session -
+            # same two-part ban the desktop panel applies.
+            core.db.add_ban('name', name, reason)
+            serial = core.db.get_serial(name)
+            if serial:
+                core.db.add_ban('serial', bytes(serial).hex(), reason)
+            kicked = core.kick(name, 'You have been banned from this server')
+            log.info('Banned %s via the dashboard (reason: %s)',
+                     name, reason or '-')
+            self._send_json({'ok': True, 'kicked': kicked,
+                             'message': f'{name} gebannt (Name + Serial)'
+                             + (' und gekickt.' if kicked else '.')})
+            return
+
+        if path == 'admin/unban':
+            kind = str(body.get('kind') or '')
+            value = str(body.get('value') or '')
+            if kind not in ('name', 'serial') or not value:
+                self._send_error_json('kind and value required', 400)
+                return
+            ok = core.db.remove_ban(kind, value)
+            log.info('Unbanned %s %s via the dashboard', kind, value)
+            self._send_json({'ok': ok,
+                             'message': 'Ban aufgehoben.' if ok else
+                             'Kein passender Ban gefunden.'})
+            return
+
+        self._send_error_json('not found', 404)
 
     def _send_file(self, relpath):
         root = os.path.abspath(self.server.core.config.web_root)

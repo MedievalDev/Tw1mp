@@ -29,9 +29,14 @@
 
 <main>
   <section id="tab-live" class="tab active">
+    <div class="admin-only" id="broadcast-bar">
+      <input id="bc-text" placeholder="Nachricht an alle Spieler…" autocomplete="off">
+      <button id="bc-send" class="btn primary">Broadcast</button>
+    </div>
+
     <h2>Spieler online</h2>
     <table id="players">
-      <thead><tr><th>Name</th><th>Stadt</th><th>Spiel</th><th>Position</th><th>seit</th></tr></thead>
+      <thead><tr><th>Name</th><th>Stadt</th><th>Spiel</th><th>Position</th><th>seit</th><th class="admin-only">Aktion</th></tr></thead>
       <tbody></tbody>
     </table>
     <p id="players-empty" class="empty">Gerade ist niemand online.</p>
@@ -56,16 +61,29 @@
       <input id="acc-filter" placeholder="Name filtern…" autocomplete="off">
     </div>
     <table id="accounts">
-      <thead><tr><th>Name</th><th>Letzter Login</th><th>Status</th></tr></thead>
+      <thead><tr><th>Name</th><th>Letzter Login</th><th>Status</th><th class="admin-only">Aktion</th></tr></thead>
       <tbody></tbody>
     </table>
 
     <h2>Bans</h2>
     <table id="bans">
-      <thead><tr><th>Art</th><th>Wert</th><th>seit</th><th>Grund</th></tr></thead>
+      <thead><tr><th>Art</th><th>Wert</th><th>seit</th><th>Grund</th><th class="admin-only">Aktion</th></tr></thead>
       <tbody></tbody>
     </table>
     <p id="bans-empty" class="empty">Keine Bans.</p>
+  </section>
+
+  <section id="tab-char" class="tab">
+    <div class="rowbar">
+      <h2>Charakter <span id="char-name" class="muted"></span></h2>
+      <button id="char-back" class="btn">Zurück</button>
+    </div>
+    <p id="char-meta" class="muted"></p>
+    <table id="charitems">
+      <thead><tr><th>Item</th><th>Kategorie</th><th>Wert</th><th>Art</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p id="char-empty" class="empty">Kein Charakter gespeichert.</p>
   </section>
 
   <section id="tab-log" class="tab">
@@ -76,6 +94,8 @@
     <pre id="log" class="log"></pre>
   </section>
 </main>
+
+<div id="toast"></div>
 
 <footer>
   <span id="updated" class="muted">–</span>

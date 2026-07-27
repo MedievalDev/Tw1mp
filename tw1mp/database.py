@@ -388,6 +388,16 @@ class Database:
             finally:
                 cur.close()
 
+    def list_forms(self):
+        """Every character form (map) the server has seen, as [form, ...]."""
+        with self.lock:
+            cur = self.db.cursor()
+            try:
+                return [row[0] for row in
+                        cur.execute('SELECT form FROM formTable').fetchall()]
+            finally:
+                cur.close()
+
     def list_users(self):
         """All accounts as [(username, lastLogin or None), ...]."""
         with self.lock:

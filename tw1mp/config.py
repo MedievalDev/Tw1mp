@@ -68,6 +68,10 @@ DEFAULTS = {
         'bind': '',
         'debug_api': 'false',
         'playerdata_download': 'false',
+        # Allow the dashboard to act on the server (kick, ban, broadcast) and
+        # to read characters. Only enable together with a localhost bind -
+        # anyone who can reach the port can use it.
+        'admin_api': 'false',
     },
 }
 
@@ -189,6 +193,7 @@ class Config:
         self.web_playerdata_download = _safe(web.getboolean, 'Web',
                                              'playerdata_download')
         self.web_bind = (web.get('bind') or '').strip()
+        self.web_admin_api = _safe(web.getboolean, 'Web', 'admin_api')
 
         self.database_path = os.path.join(self.root, 'ServerData.db')
         self.playerdata_path = os.path.join(self.root, 'PlayerData')

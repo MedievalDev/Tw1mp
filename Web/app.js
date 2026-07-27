@@ -65,6 +65,49 @@ async function getJSON(path) {
   return r.json();
 }
 
+// Writes carry a custom header; cross-origin pages cannot set it without a
+// preflight the server never approves, so a random web page open in the same
+// browser cannot drive the panel through the tunnel.
+async function postJSON(path, body) {
+  const r = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-TW1MP-Admin': '1' },
+    body: JSON.stringify(body || {}),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || (path + ' -> ' + r.status));
+  return data;
+}
+
+let toastTimer = null;
+function toast(message, isError) {
+  const el = $('#toast');
+  el.textContent = message;
+  el.classList.toggle('err', !!isError);
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3200);
+}
+
+let ADMIN = false;
+function button(label, cls, onClick) {
+  const b = document.createElement('button');
+  b.className = 'btn ' + (cls || '');
+  b.textContent = label;
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+async function act(fn, refresh) {
+  try {
+    const res = await fn();
+    toast(res.message || 'OK');
+    if (refresh) refresh();
+  } catch (e) {
+    toast(String(e.message || e), true);
+  }
+}
+
 // ---- renderers ------------------------------------------------------
 function renderStatus(s) {
   $('#title').textContent = s.server || 'TW1MP';
@@ -82,6 +125,18 @@ function renderLive(d) {
     const tr = document.createElement('tr');
     tr.append(td(n, 'name'), td(shortTown(p.town)), td(p.game || '—'),
               td(p.pos || '—'), td(fmtTime(p.loginTime)));
+    if (ADMIN) {
+      const cell = document.createElement('td');
+      cell.className = 'actions admin-only';
+      cell.append(
+        button('Kick', '', () => {
+          if (confirm(n + ' vom Server trennen?')) {
+            act(() => postJSON('admin/kick', { name: n }), poll);
+          }
+        }),
+        button('Ban', 'danger', () => banPlayer(n)));
+      tr.append(cell);
+    }
     return tr;
   }));
   $('#players-empty').style.display = names.length ? 'none' : 'block';
@@ -120,6 +175,14 @@ function renderAccounts(a) {
   setBody('bans', bans.map((b) => {
     const tr = document.createElement('tr');
     tr.append(td(b.kind), td(b.value), td(fmtDateTime(b.ts)), td(b.reason || '—'));
+    if (ADMIN) {
+      const cell = document.createElement('td');
+      cell.className = 'actions admin-only';
+      cell.appendChild(button('Entbannen', '', () => act(
+        () => postJSON('admin/unban', { kind: b.kind, value: b.value }),
+        loadAccounts)));
+      tr.append(cell);
+    }
     return tr;
   }));
   $('#bans-empty').style.display = bans.length ? 'none' : 'block';
@@ -134,8 +197,55 @@ function applyAccountFilter() {
       st.appendChild(badge(x.online ? 'online' : 'offline', x.online ? 'online' : 'offline'));
       if (x.banned) { st.append(' '); st.appendChild(badge('gebannt', 'banned')); }
       tr.append(td(x.name, 'name'), td(fmtDateTime(x.lastLogin)), st);
+      if (ADMIN) {
+        const cell = document.createElement('td');
+        cell.className = 'actions admin-only';
+        cell.append(button('Charakter', '', () => showCharacter(x.name)));
+        if (!x.banned) cell.append(button('Ban', 'danger', () => banPlayer(x.name)));
+        tr.append(cell);
+      }
       return tr;
     }));
+}
+
+function banPlayer(name) {
+  const reason = prompt('Grund für den Bann von ' + name + ' (optional):');
+  if (reason === null) return;               // cancelled
+  act(() => postJSON('admin/ban', { name: name, reason: reason }), () => {
+    poll(); loadAccounts();
+  });
+}
+
+async function loadAccounts() {
+  try { renderAccounts(await getJSON('accounts')); } catch (e) {}
+}
+
+// ---- character view -------------------------------------------------
+async function showCharacter(name) {
+  $$('nav button').forEach((x) => x.classList.remove('active'));
+  $$('.tab').forEach((x) => x.classList.remove('active'));
+  $('#tab-char').classList.add('active');
+  $('#char-name').textContent = name;
+  $('#char-meta').textContent = 'lädt…';
+  setBody('charitems', []);
+  $('#char-empty').style.display = 'none';
+  try {
+    const c = await getJSON('character?name=' + encodeURIComponent(name));
+    const items = c.items || [];
+    $('#char-meta').textContent = c.form
+      ? `Map: ${c.form} · ${(c.size / 1024).toFixed(1)} KB · ${items.length} Einträge`
+      : (c.note || 'kein Charakter');
+    setBody('charitems', items.map((it) => {
+      const tr = document.createElement('tr');
+      tr.append(td(it.name, 'name'), td(it.category),
+                td(it.quantity),
+                td(it.kind === 'class' ? 'Klasse' : 'Anzahl'));
+      return tr;
+    }));
+    $('#char-empty').style.display = items.length ? 'none' : 'block';
+  } catch (e) {
+    $('#char-meta').textContent = 'Fehler: ' + (e.message || e);
+  }
 }
 
 function renderLog(d) {
@@ -182,4 +292,28 @@ $$('nav button').forEach((b) => b.addEventListener('click', () => {
 $('#acc-filter').addEventListener('input', applyAccountFilter);
 $('#autorefresh').addEventListener('change', (e) => (e.target.checked ? start() : stop()));
 
-start();
+$('#char-back').addEventListener('click', () => {
+  $('#tab-char').classList.remove('active');
+  const btn = document.querySelector('nav button[data-tab="accounts"]');
+  btn.click();
+});
+
+function sendBroadcast() {
+  const input = $('#bc-text');
+  const text = input.value.trim();
+  if (!text) return;
+  act(() => postJSON('admin/broadcast', { text: text }).then((r) => ({
+    message: `Broadcast an ${r.recipients} Spieler gesendet.`,
+  })));
+  input.value = '';
+}
+$('#bc-send').addEventListener('click', sendBroadcast);
+$('#bc-text').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') sendBroadcast();
+});
+
+// Ask the server what it allows, then show the admin controls if enabled.
+getJSON('capabilities').then((c) => {
+  ADMIN = !!c.admin;
+  document.body.classList.toggle('admin', ADMIN);
+}).catch(() => {}).finally(start);
