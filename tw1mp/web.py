@@ -5,6 +5,7 @@ playerdata downloads. Static files from the Web/ folder are served when
 present (index.html for '/').
 """
 
+import collections
 import datetime
 import http.server
 import json
@@ -16,6 +17,28 @@ from urllib.parse import unquote, urlparse
 from . import __version__
 
 log = logging.getLogger('tw1mp.web')
+
+# In-memory tail of the server log, exposed at /log for the dashboard.
+_LOG_BUFFER = collections.deque(maxlen=500)
+
+
+class _RingLogHandler(logging.Handler):
+    """Keeps the most recent formatted log lines in a bounded deque."""
+
+    def emit(self, record):
+        try:
+            _LOG_BUFFER.append(self.format(record))
+        except Exception:
+            pass
+
+
+def _install_log_capture():
+    root = logging.getLogger('tw1mp')
+    if not any(isinstance(h, _RingLogHandler) for h in root.handlers):
+        handler = _RingLogHandler()
+        handler.setFormatter(logging.Formatter(
+            '%(asctime)s %(levelname)-7s %(name)s: %(message)s'))
+        root.addHandler(handler)
 
 _MIME_BY_EXT = {
     '.js': 'text/javascript',
@@ -40,8 +63,11 @@ class WebServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
 
     def __init__(self, core):
-        log.info('Web status server starting on port %s', core.config.web_port)
-        super().__init__((core.config.bind, core.config.web_port), WebApiServe)
+        _install_log_capture()
+        host = core.config.web_bind or core.config.bind
+        log.info('Web status server starting on %s port %s',
+                 host or '*', core.config.web_port)
+        super().__init__((host, core.config.web_port), WebApiServe)
         self.core = core
 
 
@@ -101,6 +127,40 @@ class WebApiServe(http.server.BaseHTTPRequestHandler):
             if 'game' in rqlst:
                 message['games'] = core.debug_arr_games()
             self._send_json(message)
+            return
+
+        if path == 'accounts':
+            if not cfg.web_debug_api:
+                self._send_error_json('Accounts API is disabled', 403)
+                return
+            db = core.db
+            bans = db.list_bans()
+            banned_names = {v for (k, v, *_) in bans if k == 'name'}
+            online = set(core.debug_dict_players())
+            accounts = []
+            for name, last in db.list_users():
+                accounts.append({
+                    'name': name,
+                    'lastLogin': last.isoformat() if hasattr(last, 'isoformat')
+                    else (last or None),
+                    'online': name in online,
+                    'banned': name in banned_names,
+                })
+            self._send_json({
+                'count': len(accounts),
+                'accounts': accounts,
+                'bans': [{'kind': k, 'value': v,
+                          'ts': ts.isoformat() if hasattr(ts, 'isoformat')
+                          else str(ts),
+                          'reason': r} for (k, v, ts, r) in bans],
+            })
+            return
+
+        if path == 'log':
+            if not cfg.web_debug_api:
+                self._send_error_json('Log API is disabled', 403)
+                return
+            self._send_json({'lines': list(_LOG_BUFFER)})
             return
 
         if path == 'playerdata':

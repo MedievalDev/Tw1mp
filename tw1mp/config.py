@@ -62,6 +62,10 @@ DEFAULTS = {
         # Optional HTTP status server.
         'enabled': 'false',
         'port': '17071',
+        # Bind address for the web server only (the game port uses [Server]
+        # bind). Empty = same as the game (all interfaces). Set to 127.0.0.1
+        # to keep the dashboard private and reach it through an SSH tunnel.
+        'bind': '',
         'debug_api': 'false',
         'playerdata_download': 'false',
     },
@@ -184,6 +188,7 @@ class Config:
         self.web_debug_api = _safe(web.getboolean, 'Web', 'debug_api')
         self.web_playerdata_download = _safe(web.getboolean, 'Web',
                                              'playerdata_download')
+        self.web_bind = (web.get('bind') or '').strip()
 
         self.database_path = os.path.join(self.root, 'ServerData.db')
         self.playerdata_path = os.path.join(self.root, 'PlayerData')

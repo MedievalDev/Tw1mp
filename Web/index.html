@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TW1MP Panel</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span id="dot" class="dot off" title="Verbindung"></span>
+    <h1 id="title">TW1MP</h1>
+    <span id="version" class="muted"></span>
+  </div>
+  <div class="stats">
+    <div class="stat"><b id="s-players">0</b><label>online</label></div>
+    <div class="stat"><b id="s-games">0</b><label>Spiele</label></div>
+    <div class="stat"><b id="s-accounts">0</b><label>Accounts</label></div>
+    <div class="stat"><b id="s-uptime">-</b><label>Uptime</label></div>
+  </div>
+</header>
+
+<nav>
+  <button data-tab="live" class="active">Live</button>
+  <button data-tab="accounts">Accounts</button>
+  <button data-tab="log">Log</button>
+</nav>
+
+<main>
+  <section id="tab-live" class="tab active">
+    <h2>Spieler online</h2>
+    <table id="players">
+      <thead><tr><th>Name</th><th>Stadt</th><th>Spiel</th><th>Position</th><th>seit</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p id="players-empty" class="empty">Gerade ist niemand online.</p>
+
+    <h2>Städte</h2>
+    <table id="towns">
+      <thead><tr><th>Stadt</th><th>Spieler</th><th>Spiele</th></tr></thead>
+      <tbody></tbody>
+    </table>
+
+    <h2>Laufende Spiele</h2>
+    <table id="games">
+      <thead><tr><th>Spiel</th><th>Host</th><th>Status</th><th>Spieler</th><th>Passwort</th><th>Stadt</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p id="games-empty" class="empty">Keine laufenden Spiele.</p>
+  </section>
+
+  <section id="tab-accounts" class="tab">
+    <div class="rowbar">
+      <h2>Roster <span class="muted">(<span id="acc-count">0</span>)</span></h2>
+      <input id="acc-filter" placeholder="Name filtern…" autocomplete="off">
+    </div>
+    <table id="accounts">
+      <thead><tr><th>Name</th><th>Letzter Login</th><th>Status</th></tr></thead>
+      <tbody></tbody>
+    </table>
+
+    <h2>Bans</h2>
+    <table id="bans">
+      <thead><tr><th>Art</th><th>Wert</th><th>seit</th><th>Grund</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p id="bans-empty" class="empty">Keine Bans.</p>
+  </section>
+
+  <section id="tab-log" class="tab">
+    <div class="rowbar">
+      <h2>Server-Log</h2>
+      <label class="chk"><input type="checkbox" id="log-follow" checked> Auto-Scroll</label>
+    </div>
+    <pre id="log" class="log"></pre>
+  </section>
+</main>
+
+<footer>
+  <span id="updated" class="muted">–</span>
+  <label class="chk"><input type="checkbox" id="autorefresh" checked> Auto-Refresh</label>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
