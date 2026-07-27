@@ -115,6 +115,8 @@ if ($SkipDP) {
         Invoke-WebRequest -Uri $DllUrl -OutFile $Dll -UseBasicParsing
         $len = (Get-Item $Dll).Length
         if ($len -lt 4096) { throw "DLL-Download zu klein ($len Bytes) - Abbruch." }
+        # strip Mark-of-the-Web so Defender/SmartScreen doesn't block the load
+        try { Unblock-File -Path $Dll -ErrorAction SilentlyContinue } catch {}
         Write-Host "  - DLL gespeichert: $Dll ($len Bytes)"
 
         foreach ($id in $Clsids.Keys) {
