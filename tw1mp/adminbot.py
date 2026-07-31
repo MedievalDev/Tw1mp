@@ -32,7 +32,11 @@ log = logging.getLogger('tw1mp.bot')
 # real CD key, so serial binding and the ban list treat the bot as its own
 # identity.
 _SERIAL = b'\xB0\x77\xB0\x77\xAD\x81\x00\x01'
-_GUID = b'\xB0\x77' * 8
+# Eine gueltige v4-GUID (3f2a91c4-8b6d-4e2a-9c51-7d84a6e0b3f9 im Wire-Format
+# '<IHH8s'). Der Feldtest am 2026-07-31 zeigte: Clients mit ungueltiger GUID
+# werden von den anderen nicht als Figur angelegt - der Bot bekommt daher
+# eine echte statt des frueheren B077-Musters.
+_GUID = b'\xC4\x91\x2A\x3F\x6D\x8B\x2A\x4E\x9C\x51\x7D\x84\xA6\xE0\xB3\xF9'
 # What the server derives from those bytes and stores on the account - the
 # bot has to register under that value, not under the raw handshake bytes.
 _ACCOUNT_SERIAL = bytes(base ^ key for base, key

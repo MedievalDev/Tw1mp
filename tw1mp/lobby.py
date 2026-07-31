@@ -14,7 +14,16 @@ from .protocol import em, pretty_guid, NUL
 
 log = logging.getLogger('tw1mp.lobby')
 
-DEFAULT_CHATS = ['translateNetCityMainChannel', 'translateNetCityTradeChannel']
+# The official server offers three, measured 2026-07-30; this server only
+# ever created the first two. Index 0 stays the channel joined on arrival.
+DEFAULT_CHATS = ['translateNetCityMainChannel', 'translateNetCityTradeChannel',
+                 'translateNetCityChatChannel']
+
+# A user id is announced decimal in $gamechanneluser but hex in /updheropos
+# — the same number in two bases, inherited from the reference server. Field
+# test on 2026-07-31 (three clients seeing each other) showed the client
+# copes with it, so the full range is back in use.
+MAX_USER_ID = 0x8000
 
 
 def _without(userlist, con):
@@ -72,6 +81,9 @@ class User:
                   f'"0" "{self.pguid}" "{self.posdata}" "{hdl}"') + self.herodata
 
     def getCCUmsg(self):
+        # Four fields, as measured off the official server on 2026-07-30:
+        #   $chatchanneluser "marco1994222" "" "0" "2d7da871-1d9e-..."
+        # This server used to announce chat users by name alone.
         return em(f'$chatchanneluser "{self.name}" "" "0" "{self.pguid}"')
 
 
@@ -87,13 +99,15 @@ class ChatChannel:
         con.user.leaveChat()
         con.server.dist.add({
             'target': list(self.userlist),
-            'message': em(f'$chatchanneluser "{con.user.name}"')})
+            'message': con.user.getCCUmsg()})
         self.userlist.append(con)
         con.user.chatchannel = self
-        chunks = [em(f'/joinchatchannel "{self.name}" "" "1"')]
+        # Letztes Feld ist die Teilnehmerzahl, nicht die feste 1. Gemessen
+        # am Originalserver: /joinchatchannel "...MainChannel" "" "2"
+        chunks = [em(f'/joinchatchannel "{self.name}" "" "{len(self.userlist)}"')]
         for ucon in self.userlist:
             if ucon is not con:
-                chunks.append(em(f'$chatchanneluser "{ucon.user.name}"'))
+                chunks.append(ucon.user.getCCUmsg())
         return b''.join(chunks)
 
     def remove(self, con):
@@ -341,16 +355,17 @@ class GameChannel:
             ucon.user.poschanged = False
         if not movers:
             return
-        # Each recipient only gets positions of OTHER users. The reference
-        # server echoed the mover's own position back (with a uid the
-        # client was never told about) — the field-tested solo server sent
-        # no position packets at all, so never echo at the mover.
-        for ucon in self.userlist:
-            chunks = [f'{m.user.idnum:x}#{m.user.posdata}'
-                      for m in movers if m is not ucon]
-            if chunks:
-                md.add({'target': (ucon,),
-                        'message': em('/updheropos ' + ' '.join(chunks))})
+        # Everyone in the channel gets every mover's position, the mover
+        # included. Measured off the official server on 2026-07-30 with a
+        # single player in the channel:
+        #     C->S /updheropos "1E38#345F"
+        #     S->C /updheropos 8925#1E38#345F
+        # It echoes, and unquoted. Suppressing that echo (as this server
+        # did since 2026-07-18) plausibly leaves the client without any way
+        # to learn which id is its own.
+        chunks = [f'{m.user.idnum:x}#{m.user.posdata}' for m in movers]
+        md.add({'target': list(self.userlist),
+                'message': em('/updheropos ' + ' '.join(chunks))})
 
     def debug_arr_games(self):
         return [g.debug_dict() for g in self.games.values()]
@@ -377,11 +392,13 @@ class GameState:
 
     def acquire_uid(self):
         with self.lock:
-            rnum = random.randint(1, 0x8000)
-            while rnum in self._usedUids:
-                rnum += 1
-            self._usedUids.add(rnum)
-            return rnum
+            for num in range(1, MAX_USER_ID + 1):
+                if num not in self._usedUids:
+                    self._usedUids.add(num)
+                    return num
+            num = max(self._usedUids) + 1
+            self._usedUids.add(num)
+            return num
 
     def release_uid(self, num):
         with self.lock:
