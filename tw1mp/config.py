@@ -27,6 +27,9 @@ DEFAULTS = {
         # Bind accounts to the client serial identifier (one account per key).
         'bind_serial': 'true',
         'max_channel_users': '50',
+        # Gold the game asks for when founding a guild. The official server
+        # charged 5000; 0 makes guilds free.
+        'guild_price': '0',
         # Number of lobby channels created per map (1-20).
         'channels_per_map': '1',
         'maps': 'Net_T_01,Net_T_02,Net_T_03,Net_T_04',
@@ -173,6 +176,7 @@ class Config:
         self.bind_serial = _safe(srv.getboolean, 'Server', 'bind_serial')
         self.max_channel_users = _safe(srv.getint, 'Server',
                                        'max_channel_users')
+        self.guild_price = max(0, _safe(srv.getint, 'Server', 'guild_price'))
         self.channels_per_map = max(1, min(20, _safe(srv.getint, 'Server',
                                                      'channels_per_map')))
         self.maps = [m.strip() for m in srv.get('maps').split(',') if m.strip()]

@@ -8,6 +8,7 @@ Protocol reverse engineering: buglord (CC0),
 https://github.com/buglord/Two-Worlds-1-Misc-Projects
 """
 
+import hashlib
 import struct
 import zlib
 
@@ -107,6 +108,34 @@ def pretty_guid(guid):
     da = ''.join('{:02x}'.format(i) for i in d[0:2])
     db = ''.join('{:02x}'.format(i) for i in d[2:])
     return '{:08x}-{:04x}-{:04x}-{}-{}'.format(a, b, c, da, db)
+
+
+def guid_is_broken(guid):
+    """True for the near-empty ids some installations send.
+
+    Seen in the field: 00001600-0000-0000-0000-000000000000, i.e. sixteen
+    bytes of which exactly one is non-zero. Other clients refuse to place a
+    figure for such a player — the name shows up in the list and the chat
+    works, but the character is never drawn.
+    """
+    if not guid or len(guid) != 16:
+        return True
+    return sum(1 for b in guid if b) < 4
+
+
+def derive_guid(seed):
+    """A stable, valid-looking v4 GUID derived from `seed`.
+
+    Same seed always yields the same id, so a player keeps their identity
+    across sessions, and different players never collide.
+    """
+    raw = bytearray(hashlib.sha256(
+        ('tw1mp-guid:' + seed).encode('utf-8')).digest()[:16])
+    # Make it read as a version-4 GUID in pretty_guid()'s output: the third
+    # group starts with '4', the fourth with 8/9/a/b.
+    raw[7] = (raw[7] & 0x0F) | 0x40
+    raw[8] = (raw[8] & 0x3F) | 0x80
+    return bytes(raw)
 
 
 def em(msg):

@@ -153,6 +153,44 @@ class TestChannelsAndChat(ServerFixture):
         got = alice.wait_for(b'/joinchatchannel "translateNetCityTradeChannel"')
         self.assertIn(b'/joinchatchannel "translateNetCityTradeChannel"', got)
 
+    def test_create_chat_channel(self):
+        # Third field 1 = "create it". Used to be ignored, so the client
+        # waited forever for a reply that never came.
+        alice = self.connect('alice')
+        self.join_channel(alice)
+        alice.drain(0.4)
+        alice.send_cmd('/joinchatchannel "Handelsrunde" "" "1"')
+        got = alice.wait_for(b'/joinchatchannel "Handelsrunde"')
+        self.assertIn(b'/joinchatchannel "Handelsrunde"', got)
+
+    def test_created_channel_is_announced_to_others(self):
+        alice = self.connect('alice')
+        bob = self.connect('bob')
+        self.join_channel(alice)
+        self.join_channel(bob)
+        alice.drain(0.4)
+        bob.send_cmd('/joinchatchannel "Gildenhalle" "" "1"')
+        got = alice.wait_for(b'$chatchannel "Gildenhalle"')
+        self.assertIn(b'$chatchannel "Gildenhalle"', got)
+
+    def test_created_channel_password_is_enforced(self):
+        alice = self.connect('alice')
+        bob = self.connect('bob')
+        self.join_channel(alice)
+        self.join_channel(bob)
+        alice.send_cmd('/joinchatchannel "Geheim" "losung" "1"')
+        alice.wait_for(b'/joinchatchannel "Geheim"')
+        bob.drain(0.4)
+        bob.send_cmd('/joinchatchannel "Geheim" "falsch" "0"')
+        self.assertIn(b'/error badChatPassword', bob.wait_for(b'/error'))
+
+    def test_unknown_channel_without_create_flag_is_ignored(self):
+        alice = self.connect('alice')
+        self.join_channel(alice)
+        alice.drain(0.4)
+        alice.send_cmd('/joinchatchannel "GibtsNicht" "" "0"')
+        self.assertNotIn(b'GibtsNicht', alice.drain(0.5))
+
     def test_leave_broadcasts_removal(self):
         alice = self.connect('alice')
         bob = self.connect('bob')
@@ -318,6 +356,153 @@ class TestGames(ServerFixture):
         alice.send_cmd('/leavegame')
         got = bob.wait_for(b'&game')
         self.assertIn(b'&game "MyGame"', got)
+
+
+class TestGuilds(ServerFixture):
+    """The in-game guild commands.
+
+    Wire formats measured off the official server on 2026-07-30; before this
+    the server answered all of them with 'Unknown command', so the guild
+    screens in the game did nothing at all.
+    """
+
+    def test_ladder_lists_guilds(self):
+        self.server.db.create_guild('Nekromanten')
+        self.server.db.create_guild('Seelenfaenger')
+        alice = self.connect('alice')
+        self.join_channel(alice)
+        alice.drain(0.4)
+        alice.send_cmd('/guildsladder "1"')
+        got = alice.wait_for(b'/guildsladder')
+        self.assertIn(b'/guildsladder "1"', got)
+        self.assertIn(b'"Nekromanten"', got)
+        self.assertIn(b'"Seelenfaenger"', got)
+
+    def test_ladder_on_empty_server(self):
+        alice = self.connect('alice')
+        self.join_channel(alice)
+        alice.drain(0.4)
+        alice.send_cmd('/guildsladder "1"')
+        self.assertIn(b'/guildsladder "1"', alice.wait_for(b'/guildsladder'))
+
+    def test_testcreateguild_answers_with_price(self):
+        alice = self.connect('alice')
+        self.join_channel(alice)
+        alice.drain(0.4)
+        alice.send_cmd('/testcreateguild "AlchemyFox"')
+        got = alice.wait_for(b'/testcreateguild')
+        price = self.server.config.guild_price
+        self.assertIn(f'/testcreateguild "AlchemyFox" "{price}"'
+                      .encode('latin-1'), got)
+
+    def test_guild_price_is_configurable(self):
+        self.server.config.guild_price = 1234
+        alice = self.connect('alice')
+        self.join_channel(alice)
+        alice.drain(0.4)
+        alice.send_cmd('/testcreateguild "Teuer"')
+        self.assertIn(b'/testcreateguild "Teuer" "1234"',
+                      alice.wait_for(b'/testcreateguild'))
+
+    def test_create_then_join_reports_membership(self):
+        alice = self.connect('alice')
+        bob = self.connect('bob')
+        self.join_channel(alice)
+        self.join_channel(bob)
+        alice.drain(0.4)
+        alice.send_cmd('/createguild "Fuchsbau"')
+        self.assertIn(b'/userguild "alice" "Fuchsbau"',
+                      alice.wait_for(b'/userguild'))
+        bob.drain(0.4)
+        bob.send_cmd('/joinguild "Fuchsbau" "1" "1"')
+        self.assertIn(b'/userguild "bob" "Fuchsbau"',
+                      bob.wait_for(b'/userguild'))
+        self.assertEqual(self.server.db.member_guilds().get('bob'), 'Fuchsbau')
+
+    def test_founding_via_client_dialog(self):
+        # What the real client does: ask the price, then send /joinguild
+        # with the new name. Nothing exists in the database beforehand.
+        alice = self.connect('alice')
+        self.join_channel(alice)
+        alice.drain(0.4)
+        alice.send_cmd('/testcreateguild "AlchemyFox"')
+        alice.wait_for(b'/testcreateguild')
+        alice.send_cmd('/joinguild "AlchemyFox" "1" "1"')
+        self.assertIn(b'/userguild "alice" "AlchemyFox"',
+                      alice.wait_for(b'/userguild'))
+        self.assertIn('AlchemyFox',
+                      [g['name'] for g in self.server.db.guild_standings()])
+        # and it shows up in the ladder afterwards
+        alice.send_cmd('/guildsladder "1"')
+        self.assertIn(b'"AlchemyFox"', alice.wait_for(b'/guildsladder'))
+
+    def test_join_without_price_query_does_not_create(self):
+        # Guards against a typo in the join dialog founding a guild.
+        alice = self.connect('alice')
+        self.join_channel(alice)
+        alice.drain(0.4)
+        alice.send_cmd('/joinguild "Vertipper" "1" "1"')
+        self.assertIn(b'/userguild "alice" ""', alice.wait_for(b'/userguild'))
+        self.assertEqual([g['name'] for g in self.server.db.guild_standings()],
+                         [])
+
+    def test_join_unknown_guild_reports_no_membership(self):
+        alice = self.connect('alice')
+        self.join_channel(alice)
+        alice.drain(0.4)
+        alice.send_cmd('/joinguild "GibtsNicht" "1" "1"')
+        self.assertIn(b'/userguild "alice" ""', alice.wait_for(b'/userguild'))
+
+    def test_leave_guild(self):
+        self.server.db.create_guild('Fuchsbau')
+        alice = self.connect('alice')
+        self.join_channel(alice)
+        alice.send_cmd('/joinguild "Fuchsbau" "1" "1"')
+        alice.wait_for(b'/userguild')
+        alice.send_cmd('/leaveguild')
+        self.assertIn(b'/userguild "alice" ""', alice.wait_for(b'/userguild'))
+        self.assertIsNone(self.server.db.member_guilds().get('alice'))
+
+
+class TestBrokenClientId(ServerFixture):
+    """A near-empty client id is replaced by a stable derived one.
+
+    Field-observed: such a player shows up in the name list and can chat,
+    but other clients never draw a figure for them.
+    """
+
+    BROKEN = bytes([0, 0x16] + [0] * 14)
+
+    def test_broken_id_is_replaced(self):
+        alice = self.connect('alice', guid=self.BROKEN)
+        bob = self.connect('bob')
+        self.join_channel(bob)
+        bob.drain(0.4)
+        hero = b'HERODATA' * 4
+        alice.send_cmd(f'/setuserherodata "alice" "{len(hero)}"', blob=hero)
+        self.join_channel(alice)
+        got = bob.wait_for(b'$gamechanneluser')
+        self.assertIn(b'$gamechanneluser "alice"', got)
+        self.assertNotIn(b'00001600-0000-0000-0000-000000000000', got)
+
+    def test_replacement_is_stable_per_account(self):
+        from tw1mp.protocol import derive_guid, pretty_guid
+        first = pretty_guid(derive_guid('alice'))
+        self.assertEqual(first, pretty_guid(derive_guid('alice')))
+        self.assertNotEqual(first, pretty_guid(derive_guid('bob')))
+
+    def test_valid_id_is_left_alone(self):
+        good = bytes(range(16))
+        alice = self.connect('alice', guid=good)
+        bob = self.connect('bob')
+        self.join_channel(bob)
+        bob.drain(0.4)
+        hero = b'HERODATA' * 4
+        alice.send_cmd(f'/setuserherodata "alice" "{len(hero)}"', blob=hero)
+        self.join_channel(alice)
+        from tw1mp.protocol import pretty_guid
+        self.assertIn(pretty_guid(good).encode('latin-1'),
+                      bob.wait_for(b'$gamechanneluser'))
 
 
 if __name__ == '__main__':

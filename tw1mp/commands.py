@@ -41,6 +41,13 @@ class CommandParser:
             '/update': self._update,
             '/nick': self._nick,
             '/getguildrankpoints': self._getguildrankpoints,
+            '/guildsladder': self._guildsladder,
+            '/ladder': self._guildsladder,
+            '/testcreateguild': self._testcreateguild,
+            '/creatguild': self._createguild,
+            '/createguild': self._createguild,
+            '/joinguild': self._joinguild,
+            '/leaveguild': self._leaveguild,
             '/requestcreategame': self._requestcreategame,
             '/creategame': self._creategame,
             '/stopgame': self._stopgame,
@@ -97,14 +104,109 @@ class CommandParser:
             con.user.posdata = _arg(res, 2)
             return chnl.joinChannel(con, name)
 
+    # -- guilds ---------------------------------------------------------
+    #
+    # Formats measured off the official server on 2026-07-30:
+    #   C->S /guildsladder "1"
+    #   S->C /guildsladder "1" "~EDELWEIS~" "1" "10400" "1632" "22" "12808"
+    #        "582" "1356618870" "50" "Nekromancers" "2" ...
+    #        i.e. the page number, then per guild a name plus eight numbers.
+    #   C->S /testcreateguild "AlchemyFox"
+    #   S->C /testcreateguild "AlchemyFox" "5000"      (price to found one)
+    #   C->S /joinguild "" "1" "1"
+    #   S->C /userguild "marco19942" ""                ("" = in no guild)
+    # Only the first two numbers per guild have a known meaning (rank and
+    # points); the rest are filled with member counts and zeroes, which the
+    # client accepts.
+
+    GUILD_PAGE = 20
+
+    def _guild_of(self, name):
+        return self.server.db.member_guilds().get(name, '')
+
+    def _guildsladder(self, con, res):
+        try:
+            page = max(1, int(_arg(res, 1, '1')))
+        except ValueError:
+            page = 1
+        standings = self.server.db.guild_standings()
+        # Rank by member count, the only score this server tracks so far.
+        standings.sort(key=lambda g: (-len(g.get('members') or ()),
+                                      g['name'].lower()))
+        first = (page - 1) * self.GUILD_PAGE
+        chunk = standings[first:first + self.GUILD_PAGE]
+        parts = [f'/guildsladder "{page}"']
+        for i, g in enumerate(chunk, start=first + 1):
+            members = len(g.get('members') or ())
+            parts.append(f'"{g["name"]}" "{i}" "{members}" "0" '
+                         f'"{members}" "0" "0" "0" "50"')
+        return em(' '.join(parts))
+
+    def _testcreateguild(self, con, res):
+        # The client asks what founding costs. The official server answered
+        # 5000; guild_price in Config.ini decides here, 0 = free.
+        # This is also how the founding dialog announces itself: the actual
+        # creation arrives afterwards as /joinguild with the same name, so
+        # remember the intent to tell it apart from joining someone else's.
+        name = _arg(res, 1).strip()
+        con.user.pending_guild = name
+        return em(f'/testcreateguild "{name}" '
+                  f'"{self.server.config.guild_price}"')
+
+    def _createguild(self, con, res):
+        name = _arg(res, 1).strip()
+        if not name:
+            return None
+        created = self.server.db.create_guild(name)
+        if created:
+            log.info('%s founded guild %r', con.user.name, name)
+        # Joining is what the client cares about; founding implies membership.
+        self.server.db.set_member_guild(con.user.name, name)
+        return em(f'/userguild "{con.user.name}" "{name}"')
+
+    def _joinguild(self, con, res):
+        # Carries the guild name in one of the first arguments. It is sent
+        # both for joining an existing guild and, right after
+        # /testcreateguild, for founding a new one.
+        known = {g['name'] for g in self.server.db.guild_standings()}
+        pending = getattr(con.user, 'pending_guild', '')
+        wanted = ''
+        for i in (1, 2, 3):
+            cand = _arg(res, i).strip()
+            if not cand:
+                continue
+            if cand in known:
+                wanted = cand
+                break
+            if cand == pending:
+                if self.server.db.create_guild(cand):
+                    log.info('%s founded guild %r', con.user.name, cand)
+                wanted = cand
+                break
+        con.user.pending_guild = ''
+        if wanted:
+            self.server.db.set_member_guild(con.user.name, wanted)
+        current = self._guild_of(con.user.name)
+        return em(f'/userguild "{con.user.name}" "{current}"')
+
+    def _leaveguild(self, con, res):
+        self.server.db.set_member_guild(con.user.name, '')
+        return em(f'/userguild "{con.user.name}" ""')
+
     def _joinchatchannel(self, con, res):
+        # /joinchatchannel "name" "password" "create"
+        # The last field is 1 when the client wants the channel created (the
+        # "new channel" dialog) and 0 when picking an existing one from the
+        # list. It used to be ignored, so creating a channel did nothing at
+        # all - the client waited for a reply that never came.
         name = _arg(res, 1)
         password = _arg(res, 2)
+        create = _arg(res, 3, '0') == '1'
         with self.server.state.lock:
             chnl = con.user.gamechannel
             if chnl is None:
                 return None
-            ret = chnl.joinChat(con, name, password)
+            ret = chnl.joinChat(con, name, password, create=create)
             return ret or None
 
     def _leavechatchannel(self, con, res):

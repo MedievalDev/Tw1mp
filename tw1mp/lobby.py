@@ -10,7 +10,7 @@ import logging
 import random
 import threading
 
-from .protocol import em, pretty_guid, NUL
+from .protocol import em, pretty_guid, guid_is_broken, derive_guid, NUL
 
 log = logging.getLogger('tw1mp.lobby')
 
@@ -18,6 +18,10 @@ log = logging.getLogger('tw1mp.lobby')
 # ever created the first two. Index 0 stays the channel joined on arrival.
 DEFAULT_CHATS = ['translateNetCityMainChannel', 'translateNetCityTradeChannel',
                  'translateNetCityChatChannel']
+
+# Upper bound on player-created chat channels per town, so a client cannot
+# fill the list without limit.
+MAX_CHAT_CHANNELS = 32
 
 # A user id is announced decimal in $gamechanneluser but hex in /updheropos
 # — the same number in two bases, inherited from the reference server. Field
@@ -43,11 +47,22 @@ class User:
         self.chatchannel = None
         self.requestedGame = None
         self.game = None
+        # Guild name from a pending /testcreateguild, so the /joinguild that
+        # follows is understood as founding rather than joining.
+        self.pending_guild = ''
         self.name = name
         self.loginTime = datetime.datetime.now()
         self.idnum = state.acquire_uid()
         self.connection = con
-        self.pguid = pretty_guid(con.guid)
+        # Some installations announce a near-empty id; other clients then
+        # never draw a figure for that player (the name and chat still work).
+        # Substituting a stable derived id makes them visible again.
+        if guid_is_broken(con.guid):
+            self.pguid = pretty_guid(derive_guid(name))
+            log.info('Replaced unusable client id of %s with %s',
+                     name, self.pguid)
+        else:
+            self.pguid = pretty_guid(con.guid)
 
     def leaveChannel(self):
         if self.requestedChannel:
@@ -110,6 +125,11 @@ class ChatChannel:
                 chunks.append(ucon.user.getCCUmsg())
         return b''.join(chunks)
 
+    def enum_entry(self):
+        haspass = 'XXX' if self.password else ''
+        return em(f'$chatchannel "{self.name}" "{haspass}" '
+                  f'"{len(self.userlist)}"')
+
     def remove(self, con):
         if con in self.userlist:
             self.userlist.remove(con)
@@ -117,6 +137,15 @@ class ChatChannel:
                 'target': list(self.userlist),
                 'message': em(f'&chatchanneluser "{con.user.name}"')})
         con.user.chatchannel = None
+        # A player-made channel disappears once the last one leaves; the
+        # two default channels always stay.
+        if not self.userlist and self.name not in DEFAULT_CHATS:
+            self.parent.chatChannels.pop(self.name, None)
+            tg = list(self.parent.userlist)
+            if tg:
+                con.server.dist.add({
+                    'target': tg,
+                    'message': em(f'&chatchannel "{self.name}"')})
 
 
 class GameEntry:
@@ -321,22 +350,30 @@ class GameChannel:
             'message': con.user.getGCUmsg()})
         return retmsg
 
-    def joinChat(self, con, nam, pas=''):
+    def joinChat(self, con, nam, pas='', create=False):
         chat = self.chatChannels.get(nam)
         if chat is None:
-            return b''
-        if chat.password and chat.password != pas:
+            if not create or not nam:
+                return b''
+            if len(self.chatChannels) >= MAX_CHAT_CHANNELS:
+                return em(f'/error badChatPassword "{nam}"')
+            chat = ChatChannel(self, nam, pas)
+            self.chatChannels[nam] = chat
+            log.info('%s created chat channel %r in %s%s',
+                     con.user.name, nam, self.name,
+                     ' (password protected)' if pas else '')
+            # Everyone else in the town gets the new channel in their list.
+            tg = _without(self.userlist, con)
+            if tg:
+                self.server.dist.add({'target': tg,
+                                      'message': chat.enum_entry()})
+        elif chat.password and chat.password != pas:
             return em(f'/error badChatPassword "{nam}"')
         return chat.join(con)
 
     def enumChats(self):
-        chunks = []
-        for chat in self.chatChannels.values():
-            haspass = 'XXX' if chat.password else ''
-            chunks.append(
-                f'$chatchannel "{chat.name}" "{haspass}" "{len(chat.userlist)}"'
-                .encode('latin-1'))
-        return NUL.join(chunks) + NUL
+        return b''.join(chat.enum_entry()
+                        for chat in self.chatChannels.values())
 
     def enumGames(self):
         chunks = []
