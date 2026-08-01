@@ -547,13 +547,34 @@ public:
         return DPNSUCCESS_PENDING;
     }
 
-    STDMETHODIMP EnumHosts(PDPN_APPLICATION_DESC, IDirectPlay8Address*, IDirectPlay8Address*,
-                           PVOID, DWORD, DWORD, DWORD, DWORD, PVOID,
+    STDMETHODIMP EnumHosts(PDPN_APPLICATION_DESC pAppDesc, IDirectPlay8Address* pHostAddr,
+                           IDirectPlay8Address* pDeviceInfo,
+                           PVOID pvUserEnumData, DWORD dwUserEnumDataSize,
+                           DWORD, DWORD, DWORD, PVOID pvUserContext,
                            DPNHANDLE* pAsyncHandle, DWORD) override {
-        // Two Worlds gets the exact host address from the lobby and connects
-        // directly, so enumeration is a no-op that just reports pending.
-        Log("Peer::EnumHosts (no-op)");
-        if (pAsyncHandle) *pAsyncHandle = NextHandle();
+        // Two Worlds joins by calling EnumHosts with the address it got from
+        // the lobby, and only calls Connect once it has seen an
+        // ENUM_HOSTS_RESPONSE for it. This used to be a no-op, so the game
+        // waited here forever and every join failed with "connection
+        // failed" - the host was reachable the whole time.
+        DPNHANDLE h = NextHandle();
+        if (pAsyncHandle) *pAsyncHandle = h;
+
+        std::string host; unsigned short port = 0;
+        if (!pHostAddr || !ParseHostAddr(pHostAddr, host, port)) {
+            Log("Peer::EnumHosts -> no usable host address");
+            return DPNERR_INVALIDHOSTADDRESS;
+        }
+        Log("Peer::EnumHosts -> %s:%u", host.c_str(), port);
+
+        // Answer for exactly the host we were pointed at. The address comes
+        // from the lobby, which already knows the game exists; a host that
+        // is gone simply makes the following Connect time out.
+        Job j; j.type = Job::ENUM_RESPONSE;
+        j.handle = h; j.context = pvUserContext;
+        j.enumHost = host; j.enumPort = port;
+        if (pAppDesc) j.appDesc = *pAppDesc;
+        Enqueue(j);
         return DPNSUCCESS_PENDING;
     }
 
@@ -562,12 +583,15 @@ public:
 private:
     struct Job {
         enum Type { CREATE_PLAYER, DESTROY_PLAYER, RECEIVE, SEND_COMPLETE,
-                    CONNECT_COMPLETE, INDICATE_CONNECT } type;
+                    CONNECT_COMPLETE, INDICATE_CONNECT, ENUM_RESPONSE } type;
         DPNID dpnid = 0;          // player id (CREATE/DESTROY) or sender (RECEIVE)
         std::vector<BYTE> data;   // RECEIVE payload
         DPNHANDLE handle = 0;     // SEND_COMPLETE / CONNECT async handle
         void* context = NULL;     // async user context
         HRESULT result = S_OK;    // CONNECT_COMPLETE result
+        std::string enumHost;     // ENUM_RESPONSE: host to report back
+        unsigned short enumPort = 0;
+        DPN_APPLICATION_DESC appDesc{};
     };
 
     void StartWorker() {
@@ -964,6 +988,40 @@ private:
             m.hAsyncOp = j.handle; m.pvUserContext = j.context;
             m.hResultCode = j.result; m.dpnidLocal = m_localDpnid;
             m_handler(m_context, DPN_MSGID_CONNECT_COMPLETE, &m);
+            break;
+        }
+        case Job::ENUM_RESPONSE: {
+            // Hand the game an address object for the host it asked about,
+            // so it proceeds to Connect(). Built here rather than reusing
+            // the caller's, because the game may release that one.
+            ReplAddress* sender = new ReplAddress();
+            sender->SetSP(&CLSID_DP8SP_TCPIP);
+            {
+                wchar_t hw[64];
+                MultiByteToWideChar(CP_UTF8, 0, j.enumHost.c_str(), -1,
+                                    hw, 64);
+                sender->AddComponent(DPNA_KEY_HOSTNAME, hw,
+                                     (DWORD)((wcslen(hw) + 1) * sizeof(wchar_t)),
+                                     DPNA_DATATYPE_STRING);
+                DWORD p = j.enumPort;
+                sender->AddComponent(DPNA_KEY_PORT, &p, sizeof(p),
+                                     DPNA_DATATYPE_DWORD);
+            }
+            ReplAddress* device = new ReplAddress();
+            device->SetSP(&CLSID_DP8SP_TCPIP);
+
+            DPNMSG_ENUM_HOSTS_RESPONSE m{}; m.dwSize = sizeof(m);
+            m.pAddressSender = sender;
+            m.pAddressDevice = device;
+            m.pApplicationDescription = &j.appDesc;
+            m.pvResponseData = NULL; m.dwResponseDataSize = 0;
+            m.pvUserContext = j.context;
+            m.dwRoundTripLatencyMS = 1;
+            Log("ENUM_HOSTS_RESPONSE -> %s:%u", j.enumHost.c_str(),
+                j.enumPort);
+            m_handler(m_context, DPN_MSGID_ENUM_HOSTS_RESPONSE, &m);
+            sender->Release();
+            device->Release();
             break;
         }
         case Job::SEND_COMPLETE: {
