@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>set.txt — Unlock Draw Distance in Two Worlds (2007) | TW1MP</title>
+  <meta name="description" content="The complete set.txt for Two Worlds (2007): far more view distance, LOD and detail than the shipped defaults. Drop it in your game folder and load it from the console with @set.txt.">
+  <link rel="canonical" href="https://twmp.alchemy-fox.de/graphics.html">
+  <meta name="theme-color" content="#0c0b09">
+  <meta name="robots" content="index, follow">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="TW1MP">
+  <meta property="og:title" content="set.txt — Unlock Draw Distance in Two Worlds">
+  <meta property="og:description" content="The complete graphics tuning file, ready to copy. More view distance, LOD and detail.">
+  <meta property="og:url" content="https://twmp.alchemy-fox.de/graphics.html">
+  <meta property="og:image" content="https://twmp.alchemy-fox.de/assets/og.jpg">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="css/style.css?v=17">
+</head>
+<body class="doc-page">
+
+<nav class="nav scrolled" id="nav">
+  <a href="index.html" class="nav-brand">TW1MP</a>
+  <div class="nav-links">
+    <a href="graphics.html" class="active">set.txt</a>
+    <a href="commands.html">Console</a>
+    <a href="downloads.html">Downloads</a>
+    <a href="gilden.html">Guilds</a>
+    <a href="index.html#server">Server</a>
+  </div>
+  <a href="https://github.com/MedievalDev/Tw1mp" target="_blank" rel="noopener" class="nav-gh">GitHub</a>
+</nav>
+
+<header class="doc-hero">
+  <div class="wrap">
+    <p class="eyebrow">Graphics tuning</p>
+    <h1>set.txt — see further, stare longer</h1>
+    <p>Two Worlds ships with a painfully short draw distance. This <code>set.txt</code> pushes the horizon, object detail and grass way out — most noticeable in open country and on distant objects.</p>
+  </div>
+</header>
+
+<main class="doc-body">
+  <a href="index.html" class="doc-back">← Back to the home page</a>
+
+  <h2>Before / after</h2>
+  <p>Same spot, same view — only the <code>set.txt</code> differs. Watch the <strong>hills in the background on the left</strong>: with the tuned values far more trees and vegetation get drawn instead of being clipped away.</p>
+  <div class="ba" id="baSet">
+    <img src="assets/game/settxt-tuned.jpg" alt="Two Worlds with tuned set.txt — more trees in the distance">
+    <div class="ba-top"><img src="assets/game/settxt-standard.jpg" alt="Two Worlds with default settings — sparse distance"></div>
+    <div class="ba-handle"></div>
+    <span class="ba-label ba-l-off">Default</span>
+    <span class="ba-label ba-l-on">Tuned</span>
+  </div>
+  <p class="ba-hint">Drag to compare — default on the left, tuned on the right.</p>
+
+  <h2>Where the file goes — and how to load it</h2>
+  <p>Save the file as <code>set.txt</code> in your <strong>game folder</strong> (where <code>TwoWorlds.exe</code> lives). If a <code>set.txt</code> already exists, replace its contents or append the lines.</p>
+  <p><strong>Important:</strong> the game does <em>not</em> read the file automatically on startup. You load it in-game from the console: open it with <code>^</code> (the key left of the 1), then enter:</p>
+  <div class="code"><button class="copy">Copy</button><pre>@set.txt</pre></div>
+  <p>The <code>@</code> tells the game to run the file as a list of console commands — the values take effect immediately. You need to enter <code>@set.txt</code> again after every restart.</p>
+
+  <div class="callout">The two lines with the biggest visible impact are <code>Engine.FarPlane</code> and <code>Engine.DLandFarClipp</code> — they control raw view distance. Higher = further, but it costs performance. If you get stutters, lower these two first.</div>
+
+  <h2>The complete file</h2>
+  <div class="code"><button class="copy">Copy</button><pre>Engine.AlphaFadeNear 1500
+Engine.AlphaFadeFar 3000
+Engine.DLandAFade 1500
+Engine.DLandFarClipp 7000
+Engine.DLandFarClippOBJ 7000
+Engine.DLandFogFarScale 120000
+Engine.FarPlane 2500
+Engine.LOD0 3200
+Engine.LOD1 6400
+Engine.LODblend 1066
+Engine.SFarRng 1600
+Engine.GFadeNear 1400
+Engine.GFadeFar 1600
+Engine.GrassDisp 28
+Engine.GrassQ 0.4
+Engine.GrassRandomizer 0
+Engine.AutoDOFTolerance 0.6</pre></div>
+
+  <h2>What the values do</h2>
+  <div class="tbl-wrap">
+    <table class="cmd">
+      <thead><tr><th>Line</th><th>Effect</th></tr></thead>
+      <tbody>
+        <tr><td><code>FarPlane</code></td><td>Maximum camera view distance — the single biggest effect on the visible horizon.</td></tr>
+        <tr><td><code>DLandFarClipp&nbsp;/&nbsp;OBJ</code></td><td>How far terrain and the objects placed on it get drawn.</td></tr>
+        <tr><td><code>LOD0&nbsp;/&nbsp;LOD1</code></td><td>Distance at which models drop to coarser detail levels. Higher = crisp for longer.</td></tr>
+        <tr><td><code>AlphaFadeNear&nbsp;/&nbsp;Far</code></td><td>Fade-in distance for objects so they don't pop in harshly.</td></tr>
+        <tr><td><code>GFadeNear&nbsp;/&nbsp;Far, GrassDisp, GrassQ</code></td><td>Range, density and quality of the grass.</td></tr>
+        <tr><td><code>DLandFogFarScale</code></td><td>Pushes the fog back so your new view distance doesn't vanish into haze.</td></tr>
+        <tr><td><code>AutoDOFTolerance</code></td><td>Fine-tuning for the automatic depth of field.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Getting stutters?</h2>
+  <p>Draw distance costs performance. Dial back in this order: first <code>FarPlane</code> (try 1800), then <code>DLandFarClipp</code>/<code>DLandFarClippOBJ</code> (try 5000), and <code>GrassDisp</code> last. Every value is free to tweak — it's a plain text file.</p>
+
+  <div class="doc-nav-links">
+    <a href="commands.html">→ In-game console commands</a>
+    <a href="downloads.html">→ Downloads &amp; tools</a>
+    <a href="index.html#server">→ Join the server</a>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap">
+    <p class="footer-title">TW1MP</p>
+    <p>Continues the CC0-licensed reference server <a href="https://github.com/buglord/Two-Worlds-1-Misc-Projects" target="_blank" rel="noopener">TW1CS by buglord</a> · Built by <a href="https://github.com/MedievalDev" target="_blank" rel="noopener">MedievalDev</a> / <a href="https://alchemy-fox.de" target="_blank" rel="noopener">Alchemy Fox Studio</a> · <a href="https://discord.gg/Avdqka8wEE" target="_blank" rel="noopener">Discord</a></p>
+    <p class="footer-legal">Unofficial fan project — not affiliated with or endorsed by TopWare Interactive or Reality Pump Studios. Two Worlds and all related trademarks are the property of their respective owners.</p>
+  </div>
+</footer>
+
+<script src="js/main.js?v=17"></script>
+</body>
+</html>

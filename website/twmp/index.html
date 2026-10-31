@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TW1MP — Play Two Worlds (2007) Online Again | Community Multiplayer Server</title>
+  <meta name="description" content="Play Two Worlds (2007) multiplayer again. TW1MP is a free, open-source community lobby server — the unmodified 1.7 game client connects, no patches needed. Return to Antaloor.">
+  <meta name="keywords" content="Two Worlds, Two Worlds 1, multiplayer, server, community server, TW1MP, Two Worlds online, Antaloor, 2007 RPG, lobby server, Two Worlds mods, Two Worlds modding, Two Worlds quests, quest editor, dialog editor">
+  <link rel="canonical" href="https://twmp.alchemy-fox.de/">
+  <meta name="theme-color" content="#0c0b09">
+  <meta name="robots" content="index, follow">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="TW1MP">
+  <meta property="og:title" content="TW1MP — Play Two Worlds (2007) Online Again">
+  <meta property="og:description" content="The Two Worlds community server is finally online. Free, open source, works with the unmodified 1.7 client. Return to Antaloor.">
+  <meta property="og:url" content="https://twmp.alchemy-fox.de/">
+  <meta property="og:image" content="https://twmp.alchemy-fox.de/assets/og.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="TW1MP — Play Two Worlds (2007) Online Again">
+  <meta name="twitter:description" content="The Two Worlds community server is finally online. Free, open source, no patches needed.">
+  <meta name="twitter:image" content="https://twmp.alchemy-fox.de/assets/og.jpg">
+
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="preload" as="image" href="assets/game/keyart2.jpg" fetchpriority="high">
+  <link rel="stylesheet" href="css/style.css?v=17">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "TW1MP — Two Worlds 1 Community Multiplayer Server",
+    "applicationCategory": "GameApplication",
+    "operatingSystem": "Windows, Linux",
+    "url": "https://twmp.alchemy-fox.de/",
+    "downloadUrl": "https://github.com/MedievalDev/Tw1mp",
+    "license": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "EUR" },
+    "description": "Free, open-source community lobby server for Two Worlds (2007). The unmodified 1.7 game client connects — accounts, towns, chat, matchmaking and server-side characters, exactly as in 2007.",
+    "author": { "@type": "Person", "name": "MedievalDev", "url": "https://github.com/MedievalDev" }
+  }
+  </script>
+</head>
+<body>
+
+<div class="scroll-progress" id="scrollProgress" aria-hidden="true"></div>
+
+<nav class="nav" id="nav">
+  <a href="#top" class="nav-brand">TW1MP</a>
+  <div class="nav-links">
+    <a href="#trailer">Trailer</a>
+    <a href="#server">Server</a>
+    <a href="gilden.html">Guilds</a>
+    <a href="#join">How to join</a>
+    <a href="#guides">Guides</a>
+    <a href="#arsenal">Arsenal</a>
+    <a href="#forge">Alchimist</a>
+  </div>
+  <a href="https://github.com/MedievalDev/Tw1mp" target="_blank" rel="noopener" class="nav-gh">GitHub</a>
+</nav>
+
+<header class="hero" id="top">
+  <div class="hero-bg"><img src="assets/game/keyart2.jpg" alt="" fetchpriority="high" decoding="async"></div>
+  <div class="hero-inner">
+    <p class="kicker">Return to Antaloor</p>
+    <h1>TW1MP</h1>
+    <p class="hero-sub">The Two Worlds community server is finally online.</p>
+    <div class="live-pill"><span class="dot" aria-hidden="true"></span>Server live now · <code>87.106.168.34:17171</code></div>
+    <div class="hero-ctas">
+      <a class="btn btn-solid" href="https://github.com/MedievalDev/Tw1mp" target="_blank" rel="noopener">Download on GitHub</a>
+      <a class="btn btn-line" href="#join">How to join</a>
+    </div>
+    <div class="hero-badges">
+      <span class="badge">100% free — CC0</span>
+      <span class="badge">No account, no tracking</span>
+      <span class="badge">Unmodified 1.7 client</span>
+      <span class="badge">Pure Python, zero deps</span>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <!-- ═══════════ TRAILER ═══════════ -->
+  <section class="section sec-trailer" id="trailer">
+    <div class="wrap">
+      <p class="eyebrow reveal">The legend, in motion</p>
+      <h2 class="reveal">Remember why you never really left</h2>
+      <p class="lead reveal">The original 2007 trailer. Questionable voice-over, magnificent orchestral bombast, and a world that still calls your name. Press play — nostalgia is free.</p>
+
+      <div class="trailer-frame reveal plx" data-plx="-0.05" id="trailerFrame">
+        <span class="tf-corner tf-tl"></span><span class="tf-corner tf-tr"></span>
+        <span class="tf-corner tf-bl"></span><span class="tf-corner tf-br"></span>
+        <video id="trailerVideo" poster="assets/game/ss6.jpg" preload="none" playsinline controlslist="nodownload">
+          <source src="assets/trailer.mp4" type="video/mp4">
+        </video>
+        <button class="trailer-play" id="trailerPlay" aria-label="Play trailer">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        </button>
+      </div>
+      <p class="trailer-note reveal">Official trailer © TopWare Interactive — shown here as part of a non-commercial fan project.</p>
+    </div>
+  </section>
+
+  <!-- ═══════════ SERVER ═══════════ -->
+  <section class="section section-alt" id="server">
+    <div class="wrap">
+      <p class="eyebrow reveal">The server</p>
+      <h2 class="reveal">The community server is live</h2>
+      <p class="lead reveal">This isn't a promise or a beta sign-up. When the official Two Worlds lobby servers went dark, online play died with them — Tw1mp brings it back, and it's running right now on a public host. The unmodified 1.7 client connects, registers, chats and hosts games on its own, exactly as the original protocol did.</p>
+
+      <div class="features reveal-group">
+        <div class="feature reveal"><h3>Original lobby protocol</h3><p>The complete login sequence on port 17171 — handshake, registration, login, serial binding, MOTD. No patches, no mods.</p></div>
+        <div class="feature reveal"><h3>All four multiplayer towns</h3><p>Lobby channels for every multiplayer map, with configurable channel count and player limits — up to 50 players per channel.</p></div>
+        <div class="feature reveal"><h3>Live lobby presence</h3><p>Players see each other's heroes walking around the town map, just like on the official servers. Chat, trade channels, /whois.</p></div>
+        <div class="feature reveal"><h3>Hosting &amp; matchmaking</h3><p>Create, advertise, join and start games from the lobby. Actual gameplay runs peer-to-peer over the community DirectPlay replacement, as originally designed.</p></div>
+        <div class="feature reveal"><h3>Server-side characters</h3><p>Your hero is stored on the server and follows your account. Rescue your character from a live server and import it locally.</p></div>
+        <div class="feature reveal"><h3>Secure &amp; verified</h3><p>SQLite accounts with salted PBKDF2 hashes, thread-safe lobby state, 35 protocol-level tests — verified against the real 1.7 client.</p></div>
+      </div>
+
+      <div class="stats reveal">
+        <div><strong data-count="17171">0</strong><span>lobby port</span></div>
+        <div><strong data-count="4">0</strong><span>town maps</span></div>
+        <div><strong data-count="35">0</strong><span>automated tests</span></div>
+        <div><strong data-count="0">0</strong><span>dependencies</span></div>
+        <div><strong>CC0</strong><span>public domain</span></div>
+      </div>
+
+      <div class="status-note reveal">
+        <h3>Where it stands — straight talk</h3>
+        <p>The lobby is live and reachable over the internet, and solo hosting is verified inside the running game. The next milestone is the first live two-player session over the network — grab a friend, run the installer, and you're literally that test. Until the built-in NAT resolver lands, internet co-op runs over a VPN (<code>ZeroTier</code> / <code>Tailscale</code>) or a port-forward on the host. Same LAN just works.</p>
+      </div>
+
+      <div class="quotes reveal-group">
+        <blockquote class="reveal plx" data-plx="-0.02">"After eighteen years, I heard the town bell of Net_T_01 again. I may have wept into my ale."<cite>— A returning knight, allegedly</cite></blockquote>
+        <blockquote class="reveal plx" data-plx="-0.035">"Set it up between two meadow patrols. Even I understood the registry step."<cite>— Village guard, level 4</cite></blockquote>
+        <blockquote class="reveal plx" data-plx="-0.05">"Zero dependencies? In THIS economy?"<cite>— Traveling merchant, impressed</cite></blockquote>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ JOIN ═══════════ -->
+  <section class="section" id="join">
+    <div class="wrap">
+      <p class="eyebrow reveal">How to join</p>
+      <h2 class="reveal">Five steps back to Antaloor</h2>
+      <p class="lead reveal">The server is already online — you just point your game at it and log in. The whole setup is about two minutes.</p>
+
+      <ol class="steps">
+        <li class="reveal">
+          <h3>Install the game</h3>
+          <p>Two Worlds 1, version 1.7 — e.g. the Steam <em>Epic Edition</em>. No patches or mods required.</p>
+        </li>
+        <li class="reveal">
+          <h3>Run the one-click setup</h3>
+          <p><strong>Recommended — one file, one double-click.</strong> The setup tool backs up your current server list, adds the TW1MP server, and registers the community DirectPlay replacement so online play works. Everything is per-user: <em>no admin rights, no UAC prompt</em>.</p>
+          <div class="dl-inline">
+            <a class="btn btn-solid" href="tools/TW1MP-Setup.bat" download>Download TW1MP-Setup.bat</a>
+          </div>
+          <p class="step-note">Double-click the downloaded file and follow the prompts. To undo everything later, run it again with the <code>TW1MP_REMOVE=1</code> environment variable set.</p>
+          <p style="margin-top:18px"><strong>Prefer to do it by hand?</strong> Open <code>regedit</code> at the per-user key below and prepend the server to <code>EarthNet_ServersAddresses</code> — it then shows up by name in the in-game server list. Manual hosts also need the legacy DirectPlay component (see below).</p>
+          <div class="code"><button class="copy" data-copy='HKEY_CURRENT_USER\SOFTWARE\Reality Pump\TwoWorlds\Network'>Copy</button><pre>HKEY_CURRENT_USER\SOFTWARE\Reality Pump\TwoWorlds\Network
+EarthNet_ServersAddresses = "TW1MP Community Server""87.106.168.34"</pre></div>
+        </li>
+        <li class="reveal">
+          <h3>DirectPlay — only if you set up manually</h3>
+          <p>The one-click setup already handles networking via the community replacement, so you can skip this. If you installed by hand and want to <em>host</em> sessions, enable Windows' legacy DirectPlay once and reboot:</p>
+          <div class="code"><button class="copy" data-copy="Enable-WindowsOptionalFeature -Online -FeatureName DirectPlay -All">Copy</button><pre>Enable-WindowsOptionalFeature -Online -FeatureName DirectPlay -All</pre></div>
+        </li>
+        <li class="reveal">
+          <h3>Log in</h3>
+          <p>Pick the server in the game's server selection and register or log in — unknown accounts can be created automatically on first login.</p>
+        </li>
+        <li class="reveal">
+          <h3>Play together</h3>
+          <p>The lobby handles matchmaking and chat; the game session itself runs peer-to-peer. On the same LAN it just works — over the internet, use a VPN like ZeroTier or Tailscale, or a port-forward on the host's side, until the built-in NAT resolver arrives.</p>
+        </li>
+      </ol>
+
+      <p class="host-note reveal">Want to run your own server? <code>git clone</code> the repo and start <code>TW1MP-Server.py</code> — Python 3.10+, nothing else. A Windows desktop UI with live log, player list and character import is included.</p>
+    </div>
+  </section>
+
+  <!-- ═══════════ GUIDES ═══════════ -->
+  <section class="section section-alt" id="guides">
+    <div class="wrap">
+      <p class="eyebrow reveal">Guides &amp; Downloads</p>
+      <h2 class="reveal">Get the most out of Antaloor</h2>
+      <p class="lead reveal">The admin bot in the lobby points players here — everything spelled out, ready to copy.</p>
+
+      <div class="dl-grid reveal-group">
+        <a class="dl-card reveal tilt" href="graphics.html">
+          <span class="dl-tag">set.txt</span>
+          <h3>More draw distance &amp; detail</h3>
+          <p>The complete graphics tuning file, ready to copy — wider horizon, higher LOD, denser grass.</p>
+          <span class="dl-cta">Read the guide →</span>
+        </a>
+        <a class="dl-card reveal tilt" href="commands.html">
+          <span class="dl-tag">Console</span>
+          <h3>Console commands &amp; cheats</h3>
+          <p>Open the console with <code>^</code>, enable <code>TwoWorldsCheats&nbsp;1</code>. The handiest commands in one table.</p>
+          <span class="dl-cta">See the commands →</span>
+        </a>
+        <a class="dl-card reveal tilt" href="downloads.html">
+          <span class="dl-tag">Downloads</span>
+          <h3>Server, tools &amp; mods</h3>
+          <p>Setup tool, text input fix, the quest creator and the complete modder's toolkit.</p>
+          <span class="dl-cta">All downloads →</span>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ ARSENAL ═══════════ -->
+  <section class="section sec-arsenal" id="arsenal">
+    <div class="arsenal-bg" aria-hidden="true">
+      <video src="assets/ambient.mp4" muted loop playsinline preload="metadata" id="ambientVideo"></video>
+    </div>
+    <canvas class="embers" id="embers" aria-hidden="true"></canvas>
+    <div class="wrap">
+      <p class="eyebrow reveal">The Modder's Arsenal</p>
+      <h2 class="reveal">Ten artifacts. Zero gold pieces.</h2>
+      <p class="lead reveal">Forged by MedievalDev so you don't have to hex-edit like it's 2007. Every artifact below is free, open source, and battle-tested on real installs. Equip at will — no level requirement.</p>
+
+      <div class="loot-grid reveal-group">
+        <a class="loot loot-legendary reveal tilt" href="https://github.com/MedievalDev/Two-Worlds-Modding-HUB" target="_blank" rel="noopener">
+          <span class="loot-rarity">Legendary · Set item</span>
+          <h3>Two Worlds Modding HUB</h3>
+          <p class="loot-stats">+100 Convenience &nbsp;·&nbsp; Set bonus: bundles every artifact below</p>
+          <p class="loot-flavor">"One hub to rule them all. Auto-detects your tools, ships bilingual guides, and knows more file formats than the game itself."</p>
+          <span class="loot-cta">Claim artifact →</span>
+        </a>
+        <a class="loot loot-legendary reveal tilt" href="https://github.com/MedievalDev/TW1_DialogAndQuestCreator" target="_blank" rel="noopener">
+          <span class="loot-rarity">Legendary · Newly forged</span>
+          <h3>TW1 Dialog &amp; Quest Creator</h3>
+          <p class="loot-stats">+100 Storytelling &nbsp;·&nbsp; Unlocks: writing actual quests</p>
+          <p class="loot-flavor">"For eighteen years the answer was 'you can't make quests for Two Worlds.' Then someone read the bytes. Branching dialogue, journal entries, rewards — packed into a .wd file that never touches your install. <a class='ilink' href='https://alchemy-fox.de/game/TW1_DialogAndQuestCreator/' target='_blank' rel='noopener'>Full write-up here</a>."</p>
+          <span class="loot-cta">Claim artifact →</span>
+        </a>
+        <a class="loot loot-epic reveal tilt" href="https://github.com/MedievalDev/Two-Worlds-VDF-In-Export-Tool" target="_blank" rel="noopener">
+          <span class="loot-rarity">Epic</span>
+          <h3>VDF Import/Export Tool</h3>
+          <p class="loot-stats">+40 Model Freedom · Blender plugin included</p>
+          <p class="loot-flavor">"Turns proprietary VDF into honest OBJ and back — shaders survive the round trip."</p>
+          <span class="loot-cta">Claim artifact →</span>
+        </a>
+        <a class="loot loot-epic reveal tilt" href="https://github.com/MedievalDev/Twor-Worlds-LND-Viewer" target="_blank" rel="noopener">
+          <span class="loot-rarity">Epic</span>
+          <h3>LND Map Viewer &amp; Editor</h3>
+          <p class="loot-stats">+40 Cartography · Exports full world maps to PNG</p>
+          <p class="loot-flavor">"See all of Antaloor at once. Stitch the tiles, extract every placed object to CSV, feel like a god."</p>
+          <span class="loot-cta">Claim artifact →</span>
+        </a>
+        <a class="loot loot-epic reveal tilt" href="https://github.com/MedievalDev/TwoWorlds_PAR_Editor" target="_blank" rel="noopener">
+          <span class="loot-rarity">Epic</span>
+          <h3>PAR Editor</h3>
+          <p class="loot-stats">+40 Game Balance · 1,800+ labeled fields</p>
+          <p class="loot-flavor">"Every NPC, sword and spell in one GUI. Byte-perfect saves, JSON export. Spreadsheet warriors, rejoice."</p>
+          <span class="loot-cta">Claim artifact →</span>
+        </a>
+        <a class="loot loot-rare reveal tilt" href="https://github.com/MedievalDev/TW_Mod_Installer" target="_blank" rel="noopener">
+          <span class="loot-rarity">Rare</span>
+          <h3>TW Mod Installer</h3>
+          <p class="loot-stats">+25 Laziness (the good kind)</p>
+          <p class="loot-flavor">"One click. Finds your install — Steam, GOG, CD or SDK — and activates mods so you don't have to."</p>
+          <span class="loot-cta">Claim artifact →</span>
+        </a>
+        <a class="loot loot-rare reveal tilt" href="https://github.com/MedievalDev/Two-Worlds-Model-Injection-Guide-And-Tools" target="_blank" rel="noopener">
+          <span class="loot-rarity">Rare</span>
+          <h3>Model Injection Guide &amp; Tools</h3>
+          <p class="loot-stats">+25 Craftsmanship · Full pipeline</p>
+          <p class="loot-flavor">"From Blender export to in-game glory — every step documented, no sacrifices required."</p>
+          <span class="loot-cta">Claim artifact →</span>
+        </a>
+        <a class="loot loot-rare reveal tilt" href="https://github.com/MedievalDev/TwoWorldsEditor_Command_Injector" target="_blank" rel="noopener">
+          <span class="loot-rarity">Rare</span>
+          <h3>Editor Command Injector</h3>
+          <p class="loot-stats">+25 Automation · Clipboard sorcery</p>
+          <p class="loot-flavor">"Whispers batched commands into the ancient editor. Includes a searchable command grimoire."</p>
+          <span class="loot-cta">Claim artifact →</span>
+        </a>
+        <a class="loot loot-rare reveal tilt" href="https://github.com/MedievalDev/Twor-Worlds-Dialog-Viewer-Editor" target="_blank" rel="noopener">
+          <span class="loot-rarity">Rare</span>
+          <h3>Dialog Viewer &amp; Editor</h3>
+          <p class="loot-stats">+25 Eloquence</p>
+          <p class="loot-flavor">"Reads the game's dialog files so you can finally put better words in NPCs' mouths."</p>
+          <span class="loot-cta">Claim artifact →</span>
+        </a>
+        <a class="loot loot-uncommon reveal tilt" href="https://github.com/MedievalDev/Two-Worlds-Modding-Guid" target="_blank" rel="noopener">
+          <span class="loot-rarity">Uncommon</span>
+          <h3>Modding Guide</h3>
+          <p class="loot-stats">+10 Wisdom · Starter gear</p>
+          <p class="loot-flavor">"Where every hero starts. Written guides, zero gatekeeping, no 'git gud' required."</p>
+          <span class="loot-cta">Claim artifact →</span>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ GALLERY ═══════════ -->
+  <section class="section section-alt" id="shots">
+    <div class="wrap">
+      <p class="eyebrow reveal">Screenshots</p>
+      <h2 class="reveal">Antaloor, then and forever</h2>
+      <div class="shots reveal-group">
+        <a class="shot reveal" href="assets/game/ss1.jpg"><img src="assets/game/ss1.jpg" loading="lazy" alt="Riding through the plains of Antaloor"></a>
+        <a class="shot reveal" href="assets/game/ss2.jpg"><img src="assets/game/ss2.jpg" loading="lazy" alt="A quiet lake at dusk"></a>
+        <a class="shot reveal" href="assets/game/ss3.jpg"><img src="assets/game/ss3.jpg" loading="lazy" alt="Heavy armor in the woods"></a>
+        <a class="shot reveal" href="assets/game/ss4.jpg"><img src="assets/game/ss4.jpg" loading="lazy" alt="A town square"></a>
+        <a class="shot reveal" href="assets/game/ss5.jpg"><img src="assets/game/ss5.jpg" loading="lazy" alt="Archery at the camp"></a>
+        <a class="shot reveal" href="assets/game/ss6.jpg"><img src="assets/game/ss6.jpg" loading="lazy" alt="The stone circle at sunset"></a>
+        <a class="shot reveal" href="assets/game/ss7.jpg"><img src="assets/game/ss7.jpg" loading="lazy" alt="On horseback near the standing stones"></a>
+        <a class="shot reveal" href="assets/game/ss8.jpg"><img src="assets/game/ss8.jpg" loading="lazy" alt="Meeting at the palisade"></a>
+      </div>
+      <p class="shots-note">Official screenshots, courtesy of the Steam store page.</p>
+    </div>
+  </section>
+
+  <!-- ═══════════ ALCHIMIST / FORGE ═══════════ -->
+  <section class="section sec-forge" id="forge">
+    <div class="forge-bg" aria-hidden="true"><img src="assets/alchimist/castle.jpg" alt="" loading="lazy" id="forgeBg"></div>
+    <div class="wrap forge-wrap">
+      <div class="forge-copy">
+        <p class="eyebrow reveal">From the same forge</p>
+        <h2 class="reveal">The smiths reviving Two Worlds are forging a world of their own</h2>
+        <p class="lead reveal">Meet <strong>Alchimist — Secret of the Worlds</strong>: a handcrafted open-world RPG where alchemy isn't a menu, it's a workbench. Real cauldrons, real mistakes, real explosions. A 5×6&nbsp;km world, hundreds of ingredients, and more herbs than a grandmother's pantry.</p>
+        <p class="lead reveal">If Tw1mp gave you your childhood back, this is where we're spending ours. Come take a look — the door of the smithy is always open.</p>
+        <div class="hero-ctas forge-ctas reveal">
+          <a class="btn btn-solid" href="https://alchimist-sotw.de" target="_blank" rel="noopener">Discover Alchimist</a>
+          <a class="btn btn-line" href="https://alchemy-fox.de" target="_blank" rel="noopener">Alchemy Fox Studio</a>
+        </div>
+      </div>
+      <div class="forge-cards reveal-group">
+        <a class="forge-card reveal tilt" href="https://alchimist-sotw.de" target="_blank" rel="noopener"><img src="assets/alchimist/alchemy.jpg" loading="lazy" alt="Hands-on 3D alchemy workbench in Alchimist"><span>Hands-on 3D alchemy</span></a>
+        <a class="forge-card reveal tilt" href="https://alchimist-sotw.de" target="_blank" rel="noopener"><img src="assets/alchimist/landscape.jpg" loading="lazy" alt="Open world of Alchimist"><span>A handcrafted 5×6 km world</span></a>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<div class="scroll-ind" id="scrollInd" aria-hidden="true"></div>
+
+<footer class="footer">
+  <div class="wrap">
+    <p class="footer-title">TW1MP</p>
+    <p>Continues the CC0-licensed reference server <a href="https://github.com/buglord/Two-Worlds-1-Misc-Projects" target="_blank" rel="noopener">TW1CS by buglord</a> · Built by <a href="https://github.com/MedievalDev" target="_blank" rel="noopener">MedievalDev</a> / <a href="https://alchemy-fox.de" target="_blank" rel="noopener">Alchemy Fox Studio</a> · <a href="https://discord.gg/Avdqka8wEE" target="_blank" rel="noopener">Discord</a> · Kept alive by the community</p>
+    <p class="legal-links"><button type="button" class="legal-btn" onclick="openLegal('impressum')">Impressum</button><button type="button" class="legal-btn" onclick="openLegal('datenschutz')">Datenschutz</button></p>
+    <p class="footer-legal">Unofficial fan project — not affiliated with or endorsed by TopWare Interactive or Reality Pump Studios. Two Worlds and all related trademarks are the property of their respective owners. Screenshots and trailer courtesy of the official Steam store page. Server code dedicated to the public domain (CC0 1.0).</p>
+  </div>
+</footer>
+
+<div class="lightbox" id="lightbox"><img src="" alt=""><button class="lb-close" aria-label="Close">×</button></div>
+
+<div class="lmodal" id="impressum">
+  <div class="lmodal-box">
+    <button class="lmodal-close" onclick="closeLegal('impressum')">×</button>
+    <h2>Impressum</h2>
+    <h3>Angaben gemäß § 5 DDG</h3>
+    <p><strong>Verantwortlich für den Inhalt</strong><br>Marco König<br>c/o Block Services<br>Stuttgarter Str. 106<br>70736 Fellbach<br><br>Vertreten durch anschrift.net</p>
+    <h3>Kontakt</h3>
+    <p>E-Mail: <a href="mailto:support@alchemy-fox.de">support@alchemy-fox.de</a></p>
+    <h3>Inhaltlich verantwortlich gemäß § 18 Abs. 2 MStV</h3>
+    <p>Marco König<br>Anschrift wie oben</p>
+  </div>
+</div>
+
+<div class="lmodal" id="datenschutz">
+  <div class="lmodal-box">
+    <button class="lmodal-close" onclick="closeLegal('datenschutz')">×</button>
+    <h2>Datenschutzerklärung</h2>
+    <h3>1. Verantwortlicher</h3>
+    <p>Marco König<br>c/o Block Services<br>Stuttgarter Str. 106<br>70736 Fellbach<br>E-Mail: <a href="mailto:support@alchemy-fox.de">support@alchemy-fox.de</a></p>
+    <h3>2. Allgemeines</h3>
+    <p>Diese Website verwendet keine Cookies, Tracking-Tools, Analysedienste oder Kontaktformulare. Es werden keine Schriften oder Skripte von externen Servern geladen. Alle Ressourcen (einschließlich Videos) werden lokal auf demselben Server wie diese Website gehostet.</p>
+    <h3>3. Hosting und Server-Logdateien</h3>
+    <p>Diese Website wird gehostet von der STRATO AG, Pascalstraße 10, 10587 Berlin. Beim Besuch dieser Website erhebt und speichert der Webserver automatisch Informationen in Server-Logdateien, die Ihr Browser übermittelt. Dies umfasst: IP-Adresse, Datum und Uhrzeit der Anfrage, besuchte Seiten, Referrer-URL, Browsertyp und -version sowie Betriebssystem. Die Verarbeitung erfolgt auf Grundlage von Art. 6 Abs. 1 lit. f DSGVO (berechtigtes Interesse am sicheren und effizienten Betrieb dieser Website). Die Server-Logdateien werden maximal 7 Tage gespeichert und anschließend automatisch gelöscht. Eine Zusammenführung mit anderen Datenquellen wird nicht vorgenommen. Eine Zuordnung zu bestimmten Personen ist nicht möglich.</p>
+    <h3>4. Cookies und Tracking</h3>
+    <p>Diese Website setzt keinerlei Cookies — weder technisch notwendige noch solche zu Analyse- oder Marketingzwecken. Ein Cookie-Consent-Banner ist gemäß § 25 TDDDG nicht erforderlich, da keine Informationen auf Ihrem Endgerät gespeichert oder ausgelesen werden.</p>
+    <h3>5. Externe Links</h3>
+    <p>Diese Website enthält Links zu externen Webseiten (GitHub, Steam, alchimist-sotw.de, alchemy-fox.de). Beim Klick auf diese Links verlassen Sie diese Website. Auf die Inhalte und Datenschutzpraktiken dieser externen Seiten haben wir keinen Einfluss. Bitte beachten Sie die jeweiligen Datenschutzerklärungen dieser Dienste.</p>
+    <h3>6. Ihre Rechte</h3>
+    <p>Nach der DSGVO stehen Ihnen folgende Rechte bezüglich Ihrer personenbezogenen Daten zu: Recht auf Auskunft (Art. 15), Berichtigung (Art. 16), Löschung (Art. 17), Einschränkung der Verarbeitung (Art. 18), Datenübertragbarkeit (Art. 20) und Widerspruch (Art. 21). Zur Ausübung dieser Rechte kontaktieren Sie uns bitte unter der oben angegebenen E-Mail-Adresse.</p>
+    <h3>7. Beschwerderecht</h3>
+    <p>Sie haben das Recht, sich bei einer Aufsichtsbehörde zu beschweren, wenn Sie der Ansicht sind, dass die Verarbeitung Ihrer personenbezogenen Daten gegen die DSGVO verstößt. Die zuständige Aufsichtsbehörde ist: Der Landesbeauftragte für den Datenschutz und die Informationsfreiheit Baden-Württemberg, Lautenschlagerstraße 20, 70173 Stuttgart.</p>
+    <p style="margin-top:20px;font-size:12.5px;">Stand: Juli 2026</p>
+  </div>
+</div>
+
+<script src="js/main.js?v=17"></script>
+</body>
+</html>

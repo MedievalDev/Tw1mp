@@ -80,6 +80,21 @@ DEFAULTS = {
         # anyone who can reach the port can use it.
         'admin_api': 'false',
     },
+    'Relay': {
+        # UDP game-session relay. When on, a hosting player's game session is
+        # tunnelled through this server instead of running peer-to-peer, so
+        # nobody needs port-forwarding, a VPN or an inbound firewall opening.
+        # The dpnetrelay DLL finds it through the TW1MP_RELAY env var (set by
+        # TWFix [net] in the game process), else HKCU\Software\TW1MP\Relay.
+        # Off by default: the community VPS runs tw1mp/relay.py on its own
+        # (systemd tw1mp-relay), enabling it here too would clash on the port.
+        'enabled': 'false',
+        # UDP port the relay listens on. Open it in the firewall (ufw allow
+        # <port>/udp) so players on the internet can reach it.
+        'port': '17172',
+        # Bind address for the relay only. Empty = all interfaces.
+        'bind': '',
+    },
 }
 
 
@@ -203,6 +218,10 @@ class Config:
         self.web_bind = (web.get('bind') or '').strip()
         self.public_port = _safe(web.getint, 'Web', 'public_port')
         self.web_admin_api = _safe(web.getboolean, 'Web', 'admin_api')
+        relay = cfg['Relay']
+        self.relay_enabled = _safe(relay.getboolean, 'Relay', 'enabled')
+        self.relay_port = _safe(relay.getint, 'Relay', 'port')
+        self.relay_bind = (relay.get('bind') or '').strip()
 
         self.database_path = os.path.join(self.root, 'ServerData.db')
         self.playerdata_path = os.path.join(self.root, 'PlayerData')

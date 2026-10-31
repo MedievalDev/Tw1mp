@@ -19,3 +19,5 @@ directplay_fix_log.txt
 *.ilk
 *.dll
 !directplay-relay/dpnetrelay.dll
+# Website videos (15 MB) stay on the webspace only
+website/twmp/assets/*.mp4

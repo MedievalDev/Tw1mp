@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Guilds &amp; Ranking — Live from the TW1MP server | TW1MP</title>
+  <meta name="description" content="Live guild roster and player ranking, straight from the TW1MP community server for Two Worlds.">
+  <link rel="canonical" href="https://twmp.alchemy-fox.de/gilden.html">
+  <meta name="theme-color" content="#0c0b09">
+  <meta name="robots" content="index, follow">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="TW1MP">
+  <meta property="og:title" content="Guilds &amp; Ranking — TW1MP">
+  <meta property="og:description" content="Live guild roster and player ranking from the community server.">
+  <meta property="og:url" content="https://twmp.alchemy-fox.de/gilden.html">
+  <meta property="og:image" content="https://twmp.alchemy-fox.de/assets/og.jpg">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="css/style.css?v=17">
+  <style>
+    /* guild / ranking specifics, built on the site's design tokens */
+    .guild-status {
+      display: inline-flex; align-items: center; gap: 9px; margin-bottom: 28px;
+      padding: 7px 15px 7px 13px; border: 1px solid var(--line); border-radius: 999px;
+      font-size: 13.5px; color: var(--mut);
+    }
+    .guild-status .d { width: 9px; height: 9px; border-radius: 50%; background: var(--dim); flex: none; }
+    .guild-status.live { border-color: rgba(120,200,120,0.35); color: var(--ink); }
+    .guild-status.live .d { background: #6ec46e; box-shadow: 0 0 8px rgba(120,200,120,0.6); }
+    .guild-status b { color: var(--ink); font-weight: 600; }
+    .dl-card .g-on { color: #6ec46e; }
+    .g-members { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+    .g-members span {
+      font-size: 12.5px; color: var(--ink); background: rgba(236,231,219,0.06);
+      border: 1px solid var(--line); border-radius: 6px; padding: 3px 9px;
+    }
+    .g-members .none { color: var(--dim); background: none; border: none; padding: 3px 0; font-style: italic; }
+    .rank-pos { color: var(--gold); font-weight: 700; font-family: var(--display); }
+    #guilds .dl-card { cursor: default; }
+  </style>
+</head>
+<body class="doc-page">
+
+<nav class="nav scrolled" id="nav">
+  <a href="index.html" class="nav-brand">TW1MP</a>
+  <div class="nav-links">
+    <a href="graphics.html">set.txt</a>
+    <a href="commands.html">Console</a>
+    <a href="downloads.html">Downloads</a>
+    <a href="gilden.html" class="active">Guilds</a>
+    <a href="index.html#server">Server</a>
+  </div>
+  <a href="https://github.com/MedievalDev/Tw1mp" target="_blank" rel="noopener" class="nav-gh">GitHub</a>
+</nav>
+
+<header class="doc-hero">
+  <div class="wrap">
+    <p class="eyebrow">Community</p>
+    <h1>Guilds &amp; Ranking</h1>
+    <p>Live from the TW1MP server — the guilds of Antaloor and where the heroes stand.</p>
+  </div>
+</header>
+
+<main class="doc-body">
+  <a href="index.html" class="doc-back">← Back to the home page</a>
+
+  <div class="guild-status" id="status"><span class="d"></span>Loading…</div>
+
+  <h2>Guilds</h2>
+  <div class="dl-grid" id="guilds"></div>
+  <p id="guilds-empty" style="display:none;color:var(--dim)">No guilds have been founded yet.</p>
+
+  <h2>Ranking</h2>
+  <div id="ranking"></div>
+
+  <div class="doc-nav-links">
+    <a href="index.html#server">→ Join the server</a>
+    <a href="downloads.html">→ Downloads</a>
+    <a href="commands.html">→ Console commands</a>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap">
+    <p class="footer-title">TW1MP</p>
+    <p>Continues the CC0-licensed reference server <a href="https://github.com/buglord/Two-Worlds-1-Misc-Projects" target="_blank" rel="noopener">TW1CS by buglord</a> · Built by <a href="https://github.com/MedievalDev" target="_blank" rel="noopener">MedievalDev</a> / <a href="https://alchemy-fox.de" target="_blank" rel="noopener">Alchemy Fox Studio</a> · <a href="https://discord.gg/Avdqka8wEE" target="_blank" rel="noopener">Discord</a></p>
+    <p class="footer-legal">Unofficial fan project — not affiliated with or endorsed by TopWare Interactive or Reality Pump Studios. Two Worlds and all related trademarks are the property of their respective owners.</p>
+  </div>
+</footer>
+
+<script src="js/main.js?v=17"></script>
+<script>
+(function () {
+  var esc = function (s) { var d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; };
+
+  function render(data) {
+    var st = document.getElementById('status');
+    if (!data || !data.ok) {
+      st.className = 'guild-status';
+      st.innerHTML = '<span class="d"></span>Server currently unreachable.';
+      return;
+    }
+    var s = data.summary || {};
+    st.className = 'guild-status live';
+    st.innerHTML = '<span class="d"></span><b>' + esc(s.server || 'TW1MP') + '</b> · ' +
+      (s.playersOnline || 0) + ' online · ' + (s.guilds || 0) + ' guilds';
+
+    var guilds = data.guilds || [];
+    document.getElementById('guilds').innerHTML = guilds.map(function (g) {
+      var mem = (g.members || []).map(function (m) { return '<span>' + esc(m) + '</span>'; }).join('') ||
+        '<span class="none">no members yet</span>';
+      var on = g.online ? ' · <span class="g-on">' + g.online + ' online</span>' : '';
+      return '<div class="dl-card"><span class="dl-tag">' + esc(g.tag || 'Guild') + '</span>' +
+        '<h3>' + esc(g.name) + '</h3>' +
+        '<p>' + (g.memberCount || 0) + ' members' + on + '</p>' +
+        '<div class="g-members">' + mem + '</div></div>';
+    }).join('');
+    document.getElementById('guilds-empty').style.display = guilds.length ? 'none' : 'block';
+
+    var r = data.ranking || {};
+    var rank = document.getElementById('ranking');
+    if (!r.available) {
+      rank.innerHTML = '<div class="callout">The ranking is being prepared — it goes live once player progress is tracked.</div>';
+    } else {
+      var rows = (r.players || []).map(function (p, i) {
+        return '<tr><td class="rank-pos">#' + (i + 1) + '</td><td>' + esc(p.name) +
+          '</td><td>' + esc(p.xp) + '</td><td>' + (p.gold != null ? esc(p.gold) : '—') + '</td></tr>';
+      }).join('');
+      rank.innerHTML = '<div class="tbl-wrap"><table class="cmd"><thead><tr>' +
+        '<th>#</th><th>Player</th><th>XP</th><th>Gold</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+    }
+  }
+
+  function load() {
+    fetch('tw1mp-data.php', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(render)
+      .catch(function () { render(null); });
+  }
+  load();
+  setInterval(load, 30000);
+})();
+</script>
+</body>
+</html>

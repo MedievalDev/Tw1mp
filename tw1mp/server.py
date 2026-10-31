@@ -323,6 +323,10 @@ class CoreServer(socketserver.ThreadingTCPServer):
         if getattr(config, 'public_port', 0):
             from .web import PublicWebServer
             self.publicapi = PublicWebServer(self)
+        self.relay = None
+        if getattr(config, 'relay_enabled', False):
+            from .relay import RelayServer
+            self.relay = RelayServer(config.relay_bind, config.relay_port)
 
     def getPlayer(self, username):
         with self.state.lock:
@@ -431,6 +435,12 @@ class CoreServer(socketserver.ThreadingTCPServer):
             publicThread = threading.Thread(
                 target=self.publicapi.serve_forever, daemon=True)
             publicThread.start()
+        relayThread = None
+        if self.relay:
+            self.relay.open()
+            relayThread = threading.Thread(
+                target=self.relay.serve_forever, daemon=True)
+            relayThread.start()
         if self.config.bot_enabled:
             from .adminbot import AdminBot
             self.bot = AdminBot(self)
@@ -451,6 +461,10 @@ class CoreServer(socketserver.ThreadingTCPServer):
                 self.publicapi.shutdown()
                 self.publicapi.server_close()
                 publicThread.join()
+            if self.relay:
+                self.relay.shutdown()
+                relayThread.join()
+                self.relay.server_close()
             distThread.join()
 
     def handle_signal(self, timeout=2):

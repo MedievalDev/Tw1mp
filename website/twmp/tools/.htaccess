@@ -1,0 +1,7 @@
+# Force script files to download instead of rendering as text in the browser
+<FilesMatch "\.(bat|ps1|reg)$">
+  ForceType application/octet-stream
+  <IfModule mod_headers.c>
+    Header set Content-Disposition attachment
+  </IfModule>
+</FilesMatch>
