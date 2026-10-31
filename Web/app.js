@@ -201,6 +201,7 @@ function applyAccountFilter() {
         const cell = document.createElement('td');
         cell.className = 'actions admin-only';
         cell.append(button('Charakter', '', () => showCharacter(x.name)));
+        cell.append(button('Savegames', '', () => openSaves(x.name)));
         if (!x.banned) cell.append(button('Ban', 'danger', () => banPlayer(x.name)));
         tr.append(cell);
       }
@@ -359,6 +360,250 @@ function revertCharacter() {
   }), () => showCharacter(charState.name));
 }
 
+// ---- small helpers for the new tabs ---------------------------------
+function el(tag, cls) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  return e;
+}
+function fmtBytes(n) {
+  return n >= 1024 ? (n / 1024).toFixed(1) + ' KB' : n + ' B';
+}
+function downloadFile(path) {                 // GET download via the server's Content-Disposition
+  const a = el('a');
+  a.href = path;
+  a.download = '';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+function pickFile() {
+  return new Promise((res) => {
+    const i = el('input');
+    i.type = 'file';
+    i.onchange = () => res(i.files[0] || null);
+    i.click();
+  });
+}
+function fileToB64(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result).split(',')[1] || '');
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+}
+function selectTab(tab) {
+  $$('nav button').forEach((x) => x.classList.remove('active'));
+  $$('.tab').forEach((x) => x.classList.remove('active'));
+  const b = document.querySelector('nav button[data-tab="' + tab + '"]');
+  if (b) b.classList.add('active');
+  $('#tab-' + tab).classList.add('active');
+}
+async function ensureAccounts() {
+  if (!accountsCache.length) await loadAccounts();
+}
+
+// ---- character maintenance (on the character tab) -------------------
+function exportChar() {
+  if (charState.name) downloadFile('character/download?name=' + encodeURIComponent(charState.name));
+}
+async function importChar() {
+  if (!charState.name) return;
+  const f = await pickFile();
+  if (!f) return;
+  if (!confirm('Charakter von ' + charState.name + ' aus Datei überschreiben?')) return;
+  const data = await fileToB64(f);
+  act(() => postJSON('admin/character/import', { name: charState.name, data }),
+    () => showCharacter(charState.name));
+}
+function deleteChar() {
+  if (!charState.name) return;
+  if (!confirm('Gespeicherten Charakter von ' + charState.name
+               + ' löschen? Der Account bleibt bestehen.')) return;
+  act(() => postJSON('admin/character/delete', { name: charState.name }),
+    () => showCharacter(charState.name));
+}
+function deleteAccount() {
+  if (!charState.name) return;
+  if (!confirm('Account "' + charState.name + '" und ALLE Spielstände '
+               + 'endgültig löschen? Das kann nicht rückgängig gemacht werden.')) return;
+  act(() => postJSON('admin/account/delete', { name: charState.name }),
+    () => { loadAccounts(); selectTab('accounts'); });
+}
+
+// ---- savegames ------------------------------------------------------
+let savesAccount = null;
+
+async function openSaves(name) {
+  savesAccount = name;
+  selectTab('saves');
+  await enterSaves();
+}
+async function enterSaves() {
+  await ensureAccounts();
+  const sel = $('#sg-account');
+  sel.replaceChildren();
+  accountsCache.forEach((a) => {
+    const o = el('option');
+    o.value = a.name; o.textContent = a.name;
+    sel.appendChild(o);
+  });
+  if (savesAccount && accountsCache.some((a) => a.name === savesAccount)) sel.value = savesAccount;
+  else savesAccount = sel.value || null;
+  await loadSnapshots();
+}
+async function loadSnapshots() {
+  if (!savesAccount) {
+    setBody('snaps', []);
+    $('#sg-active').textContent = 'Kein Account gewählt.';
+    $('#snaps-empty').style.display = 'block';
+    return;
+  }
+  let d;
+  try { d = await getJSON('snapshots?name=' + encodeURIComponent(savesAccount)); }
+  catch (e) { toast(String(e.message || e), true); return; }
+  $('#sg-active').textContent = d.activeSize
+    ? 'Aktiver Charakter: ' + fmtBytes(d.activeSize)
+    : 'Aktiver Charakter: keiner gespeichert.';
+  const snaps = d.snapshots || [];
+  setBody('snaps', snaps.map((s) => {
+    const tr = el('tr');
+    const size = s.size === 0 ? 'leer (neuer Charakter)' : fmtBytes(s.size);
+    tr.append(td(s.name, 'name'), td(size), td(fmtDateTime(s.mtime)));
+    if (ADMIN) {
+      const cell = el('td', 'actions admin-only');
+      cell.append(
+        button('Aktivieren', '', () => snapAction('activate', s.name,
+          s.size === 0
+            ? 'Für ' + savesAccount + ' einen neuen Charakter aus "' + s.name + '" starten? Der aktive wird geleert.'
+            : '"' + s.name + '" aktivieren und den aktiven Charakter ersetzen?')),
+        button('Umbenennen', '', () => renameSnap(s.name)),
+        button('Export', '', () => downloadFile('snapshot/download?name='
+          + encodeURIComponent(savesAccount) + '&snap=' + encodeURIComponent(s.name))),
+        button('Löschen', 'danger', () => snapAction('delete', s.name,
+          'Spielstand "' + s.name + '" löschen?')));
+      tr.append(cell);
+    }
+    return tr;
+  }));
+  $('#snaps-empty').style.display = snaps.length ? 'none' : 'block';
+}
+function snapAction(action, snap, confirmMsg) {
+  if (confirmMsg && !confirm(confirmMsg)) return;
+  act(() => postJSON('admin/snapshot/' + action, { name: savesAccount, snap }), loadSnapshots);
+}
+function renameSnap(snap) {
+  const nn = prompt('Neuer Name für "' + snap + '":', snap);
+  if (!nn || nn === snap) return;
+  act(() => postJSON('admin/snapshot/rename', { name: savesAccount, snap, newname: nn }), loadSnapshots);
+}
+function saveCurrentSnap() {
+  const nm = $('#sg-newname').value.trim();
+  if (!nm) { toast('Name fehlt.', true); return; }
+  act(() => postJSON('admin/snapshot/save', { name: savesAccount, snap: nm }),
+    () => { $('#sg-newname').value = ''; loadSnapshots(); });
+}
+function newSnap() {
+  const nm = $('#sg-newname').value.trim();
+  if (!nm) { toast('Name fehlt.', true); return; }
+  act(() => postJSON('admin/snapshot/new', { name: savesAccount, snap: nm }),
+    () => { $('#sg-newname').value = ''; loadSnapshots(); });
+}
+async function importSnap() {
+  if (!savesAccount) return;
+  const f = await pickFile();
+  if (!f) return;
+  const nm = $('#sg-newname').value.trim() || f.name.replace(/\.[^.]+$/, '');
+  const data = await fileToB64(f);
+  act(() => postJSON('admin/snapshot/import', { name: savesAccount, snap: nm, data }),
+    () => { $('#sg-newname').value = ''; loadSnapshots(); });
+}
+
+// ---- settings -------------------------------------------------------
+let settingsInputs = {};
+
+async function loadSettings() {
+  $('#set-status').textContent = 'lädt…';
+  try {
+    renderSettings(await getJSON('config'));
+    $('#set-status').textContent = '';
+  } catch (e) {
+    $('#set-status').textContent = 'Fehler: ' + (e.message || e);
+  }
+}
+function renderSettings(doc) {
+  const host = $('#settings-form');
+  host.replaceChildren();
+  settingsInputs = {};
+  (doc.groups || []).forEach((g) => {
+    const box = el('div', 'setgroup');
+    const h = el('h3');
+    h.textContent = g.title;
+    box.appendChild(h);
+    g.fields.forEach((f) => {
+      const key = f.section + '.' + f.key;
+      const row = el('label', 'setrow');
+      if (f.type === 'bool') {
+        row.classList.add('bool');
+        const cb = el('input');
+        cb.type = 'checkbox';
+        cb.checked = !!f.value;
+        const span = el('span');
+        span.textContent = f.label;
+        row.append(cb, span);
+        settingsInputs[key] = () => cb.checked;
+      } else {
+        const span = el('span');
+        span.textContent = f.label;
+        if (f.restart) {
+          const t = el('span', 'rtag');
+          t.textContent = ' · Neustart';
+          span.appendChild(t);
+        }
+        let inp;
+        if (f.type === 'motd') {
+          inp = el('textarea');
+          inp.value = f.value == null ? '' : f.value;
+        } else {
+          inp = el('input');
+          inp.type = f.type === 'int' ? 'number' : 'text';
+          inp.value = f.value == null ? '' : f.value;
+        }
+        row.append(span, inp);
+        settingsInputs[key] = () => inp.value;
+      }
+      box.appendChild(row);
+    });
+    host.appendChild(box);
+  });
+  const panel = doc.panel || {};
+  $('#panel-mode').value = panel.mode || 'client';
+  $('#panel-pw').value = '';
+  $('#panel-pw').placeholder = panel.hasPassword
+    ? 'gesetzt — leer lassen = unverändert'
+    : 'leer lassen = kein Passwort';
+}
+async function saveConfig(restart) {
+  const settings = {};
+  Object.keys(settingsInputs).forEach((k) => { settings[k] = settingsInputs[k](); });
+  const body = { settings, panel: { mode: $('#panel-mode').value } };
+  const pw = $('#panel-pw').value;
+  if (pw !== '') body.adminPassword = pw;
+  try {
+    const r = await postJSON('admin/config', body);
+    toast(r.message || 'Gespeichert.');
+    if (restart) {
+      const rr = await postJSON('admin/restart', {});
+      toast(rr.message || 'Server startet neu…');
+    } else {
+      loadSettings();
+    }
+  } catch (e) {
+    toast(String(e.message || e), true);
+  }
+}
+
 function renderLog(d) {
   const el = $('#log');
   const follow = $('#log-follow').checked;
@@ -403,7 +648,32 @@ $$('nav button').forEach((b) => b.addEventListener('click', () => {
   b.classList.add('active');
   $('#tab-' + b.dataset.tab).classList.add('active');
   if (b.dataset.tab === 'guilds') loadGuilds();
+  if (b.dataset.tab === 'saves') enterSaves();
+  if (b.dataset.tab === 'settings') loadSettings();
 }));
+
+// savegames tab
+$('#sg-account').addEventListener('change', (e) => {
+  savesAccount = e.target.value;
+  loadSnapshots();
+});
+$('#sg-save').addEventListener('click', saveCurrentSnap);
+$('#sg-new').addEventListener('click', newSnap);
+$('#sg-import').addEventListener('click', importSnap);
+
+// settings tab
+$('#set-save').addEventListener('click', () => saveConfig(false));
+$('#set-restart').addEventListener('click', () => {
+  if (confirm('Server jetzt neu starten? Verbundene Spieler werden getrennt.')) saveConfig(true);
+});
+$('#set-reload').addEventListener('click', loadSettings);
+
+// character maintenance
+$('#char-export').addEventListener('click', exportChar);
+$('#char-import').addEventListener('click', importChar);
+$('#char-saves').addEventListener('click', () => { if (charState.name) openSaves(charState.name); });
+$('#char-delchar').addEventListener('click', deleteChar);
+$('#char-delacc').addEventListener('click', deleteAccount);
 $('#g-create').addEventListener('click', createGuild);
 $('#g-name').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') createGuild();

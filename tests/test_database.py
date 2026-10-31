@@ -36,14 +36,43 @@ class TestDatabase(unittest.TestCase):
         self.assertEqual(self.db.register('bob', self.serial, 'pw'),
                          database.ERR_SERIAL_IN_USE)
 
-    def test_serial_binding(self):
+    def test_serial_binding_still_rejects_wrong_password(self):
         self.assertEqual(self.db.register('alice', self.serial, 'pw'),
                          database.OK)
-        self.assertEqual(self.db.login('alice', b'\x09' * 8, 'pw'),
+        self.assertEqual(self.db.login('alice', b'\x09' * 8, 'falsch'),
                          database.ERR_BAD_CREDENTIALS)
         self.cfg.bind_serial = False
         self.assertEqual(self.db.login('alice', b'\x09' * 8, 'pw'),
                          database.OK)
+
+    def test_account_follows_a_new_key(self):
+        # Re-activating the game changes the key. Without this the owner
+        # would be locked out of their own account permanently.
+        self.assertEqual(self.db.register('alice', self.serial, 'pw'),
+                         database.OK)
+        newkey = b'\x09' * 8
+        self.assertEqual(self.db.login('alice', newkey, 'pw'), database.OK)
+        self.assertEqual(self.db.get_serial('alice'), newkey)
+        # the old key no longer works
+        self.assertEqual(self.db.login('alice', self.serial, 'pw'),
+                         database.OK)  # ... and moves the account back
+
+    def test_key_of_another_account_is_refused(self):
+        self.assertEqual(self.db.register('alice', self.serial, 'pw'),
+                         database.OK)
+        bobkey = b'\x09' * 8
+        self.assertEqual(self.db.register('bob', bobkey, 'pw'), database.OK)
+        # alice may not take over the key bob is registered with
+        self.assertEqual(self.db.login('alice', bobkey, 'pw'),
+                         database.ERR_BAD_CREDENTIALS)
+        self.assertEqual(self.db.get_serial('bob'), bobkey)
+
+    def test_moving_needs_the_right_password(self):
+        self.assertEqual(self.db.register('alice', self.serial, 'pw'),
+                         database.OK)
+        self.assertEqual(self.db.login('alice', b'\x09' * 8, 'falsch'),
+                         database.ERR_BAD_CREDENTIALS)
+        self.assertEqual(self.db.get_serial('alice'), self.serial)
 
     def test_userinfo(self):
         self.db.register('alice', self.serial, 'pw', 'a@example.org', 'DE',

@@ -517,9 +517,24 @@ class Database:
         with self.lock:
             cur = self.db.cursor()
             try:
+                moved = False
                 if self.cfg.bind_serial:
                     uidres = cur.execute(_SQL_userID_strict,
                                          (username, serial)).fetchone()
+                    if uidres is None:
+                        # Right account, different key: happens after
+                        # re-activating the game or a hardware change, and
+                        # would otherwise lock the owner out of their own
+                        # account for good. The password still has to match,
+                        # and the new key must not belong to anybody else.
+                        cand = cur.execute(_SQL_userID,
+                                           (username,)).fetchone()
+                        if cand is not None:
+                            taken = cur.execute(_SQL_userID_Schk,
+                                                (serial,)).fetchone()
+                            if taken is None or taken[0] == cand[0]:
+                                uidres = cand
+                                moved = True
                 else:
                     uidres = cur.execute(_SQL_userID, (username,)).fetchone()
                 if uidres is None:
@@ -535,6 +550,11 @@ class Database:
                 if hiter != HASH_ITERATIONS:
                     npsh = _salt_hash(password, salt, HASH_ITERATIONS)
                     cur.execute(_SQLUPD_passHash, (npsh, HASH_ITERATIONS, uid))
+                if moved:
+                    cur.execute('UPDATE userTable SET serial = ? '
+                                'WHERE rowid = ?', (serial, uid))
+                    log.info('%s signed in with a new key; account moved to '
+                             'it (old one no longer valid)', username)
                 cur.execute(_SQL_loginUpdate, (datetime.datetime.now(), uid))
                 self.db.commit()
                 return OK

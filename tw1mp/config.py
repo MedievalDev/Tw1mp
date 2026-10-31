@@ -79,6 +79,12 @@ DEFAULTS = {
         # to read characters. Only enable together with a localhost bind -
         # anyone who can reach the port can use it.
         'admin_api': 'false',
+        # Host names (comma-separated) of a reverse proxy in front of the
+        # dashboard, e.g. the Caddy link. Admin writes are accepted from a
+        # browser Origin on localhost or on one of these names only. Taking
+        # the Origin from the request's own Host header instead would let a
+        # DNS-rebinding page drive the panel through the SSH tunnel.
+        'panel_hosts': '87-106-168-34.sslip.io',
     },
     'Relay': {
         # UDP game-session relay. When on, a hosting player's game session is
@@ -167,16 +173,32 @@ class Config:
     def __init__(self, root=None, path=None):
         self.root = root or os.getcwd()
         self.path = path or os.path.join(self.root, 'Config.ini')
-        cfg = configparser.ConfigParser()
-        cfg.read_dict(DEFAULTS)
-        if os.path.exists(self.path):
-            cfg.read(self.path)
-        else:
+        if not os.path.exists(self.path):
+            cfg = configparser.ConfigParser()
+            cfg.read_dict(DEFAULTS)
             try:
                 with open(self.path, 'w') as f:
                     cfg.write(f)
             except OSError:
                 pass  # read-only dir: run with defaults
+        self._load()
+
+    def reload(self):
+        """Re-read Config.ini into this same object.
+
+        Used by the web panel after saving settings: attributes that the
+        server consults per request (auto-register, send_nops, bot colour,
+        the web debug/admin toggles, …) take effect immediately, while the
+        bound sockets (ports, bind address) still need a real restart.
+        Keeps the object identity so any live references stay valid.
+        """
+        self._load()
+
+    def _load(self):
+        cfg = configparser.ConfigParser()
+        cfg.read_dict(DEFAULTS)
+        if os.path.exists(self.path):
+            cfg.read(self.path)
         srv = cfg['Server']
         self.name = srv.get('name')
         self.title = srv.get('title')
@@ -218,6 +240,9 @@ class Config:
         self.web_bind = (web.get('bind') or '').strip()
         self.public_port = _safe(web.getint, 'Web', 'public_port')
         self.web_admin_api = _safe(web.getboolean, 'Web', 'admin_api')
+        self.web_panel_hosts = {h.strip().lower() for h in
+                                (web.get('panel_hosts') or '').split(',')
+                                if h.strip()}
         relay = cfg['Relay']
         self.relay_enabled = _safe(relay.getboolean, 'Relay', 'enabled')
         self.relay_port = _safe(relay.getint, 'Relay', 'port')

@@ -113,6 +113,8 @@ body:not(.admin) .admin-only { display: none !important; }
 td.actions { white-space: nowrap; }
 
 #char-actions { margin-top: 14px; }
+#char-manage { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap;
+  border-top: 1px solid var(--line); padding-top: 14px; }
 #char-actions .muted { margin: 8px 0 0; max-width: 640px; }
 input.qty {
   width: 84px; background: var(--panel2); border: 1px solid var(--line);
@@ -122,6 +124,40 @@ input.qty {
 input.qty:focus { outline: none; border-color: var(--gold); }
 input.qty.dirty { border-color: var(--gold); color: var(--gold); }
 .badge.mod { background: rgba(255,200,60,.15); color: var(--gold); }
+
+/* settings + savegames */
+.selbox, #sg-newname, #panel-pw {
+  background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+  border-radius: 6px; padding: 7px 10px; font-size: 13px;
+}
+#sg-bar { display: flex; gap: 8px; margin: 12px 0 16px; flex-wrap: wrap; }
+#sg-newname { flex: 1; min-width: 200px; }
+.setgroup {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  padding: 6px 16px; margin-bottom: 14px;
+}
+.setgroup h3 {
+  font-size: 12px; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--gold); margin: 14px 0 6px; font-weight: 600;
+}
+.setrow {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 7px 0; border-bottom: 1px solid var(--line);
+}
+.setrow:last-child { border-bottom: none; }
+.setrow > span { color: var(--text); flex: 1; }
+.setrow > span small { color: var(--muted); display: block; font-size: 11px; }
+.setrow input[type=text], .setrow input[type=number], .setrow textarea, .setrow .selbox {
+  background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+  border-radius: 6px; padding: 6px 10px; font-size: 13px; width: 320px; max-width: 46vw;
+}
+.setrow textarea { height: 60px; resize: vertical; font-family: inherit; }
+.setrow input:focus, .setrow textarea:focus, .selbox:focus { outline: none; border-color: var(--gold); }
+.setrow.bool { justify-content: flex-start; cursor: pointer; }
+.setrow.bool input { width: 16px; height: 16px; accent-color: var(--gold); }
+.setrow .rtag { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+#settings-actions { display: flex; gap: 8px; margin: 18px 0 8px; flex-wrap: wrap; }
+#settings-actions .btn { padding: 8px 16px; font-size: 13px; }
 
 #toast {
   position: fixed; left: 50%; bottom: 46px; transform: translateX(-50%);

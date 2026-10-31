@@ -25,6 +25,8 @@
   <button data-tab="live" class="active">Live</button>
   <button data-tab="accounts">Accounts</button>
   <button data-tab="guilds">Gilden</button>
+  <button data-tab="saves" class="admin-only">Savegames</button>
+  <button data-tab="settings" class="admin-only">Einstellungen</button>
   <button data-tab="log">Log</button>
 </nav>
 
@@ -95,6 +97,55 @@
     </table>
   </section>
 
+  <section id="tab-saves" class="tab">
+    <div class="rowbar">
+      <h2>Savegames</h2>
+      <select id="sg-account" class="selbox"></select>
+    </div>
+    <p id="sg-active" class="muted">–</p>
+    <div class="admin-only" id="sg-bar">
+      <input id="sg-newname" placeholder="Name für neuen Spielstand…" autocomplete="off">
+      <button id="sg-save" class="btn primary">Aktuellen speichern</button>
+      <button id="sg-new" class="btn">Leer anlegen</button>
+      <button id="sg-import" class="btn">Import…</button>
+    </div>
+    <table id="snaps">
+      <thead><tr><th>Name</th><th>Größe</th><th>Gespeichert</th><th class="admin-only">Aktion</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p id="snaps-empty" class="empty">Keine gespeicherten Spielstände.</p>
+    <p class="muted">Ein leerer Spielstand startet beim Aktivieren einen
+      brandneuen Charakter. „Aktivieren" ersetzt den aktiven Charakter des
+      Accounts.</p>
+  </section>
+
+  <section id="tab-settings" class="tab">
+    <div class="rowbar">
+      <h2>Server-Einstellungen</h2>
+      <span id="set-status" class="muted"></span>
+    </div>
+    <div id="settings-form"></div>
+
+    <h2>Panel-Zugang (Desktop-App)</h2>
+    <div class="setgroup">
+      <label class="setrow"><span>Panel öffnet als</span>
+        <select id="panel-mode" class="selbox">
+          <option value="client">Client</option>
+          <option value="server">Server (Admin)</option>
+        </select></label>
+      <label class="setrow"><span>Admin-Passwort der Desktop-App</span>
+        <input id="panel-pw" type="password" placeholder="leer lassen = unverändert" autocomplete="new-password"></label>
+      <p class="muted">Sperrt nur die lokale Desktop-App. Das Web-Panel selbst
+        ist über den Login davor (Caddy) geschützt.</p>
+    </div>
+
+    <div class="admin-only" id="settings-actions">
+      <button id="set-save" class="btn primary">Speichern</button>
+      <button id="set-restart" class="btn">Speichern & Server neu starten</button>
+      <button id="set-reload" class="btn">Neu laden</button>
+    </div>
+  </section>
+
   <section id="tab-char" class="tab">
     <div class="rowbar">
       <h2>Charakter <span id="char-name" class="muted"></span></h2>
@@ -112,6 +163,13 @@
       <p class="muted">Bearbeitungen landen in einer Kopie — das Original des
         Spielers wird nie überschrieben. Der Server liefert die Kopie nur aus,
         wenn der Spieler allein online ist.</p>
+    </div>
+    <div class="admin-only" id="char-manage">
+      <button id="char-export" class="btn">Charakter exportieren</button>
+      <button id="char-import" class="btn">Charakter importieren…</button>
+      <button id="char-saves" class="btn">Savegames</button>
+      <button id="char-delchar" class="btn danger">Charakter löschen</button>
+      <button id="char-delacc" class="btn danger">Account löschen</button>
     </div>
   </section>
 
