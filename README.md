@@ -191,12 +191,21 @@ The multiplayer game session runs peer-to-peer over DirectPlay8. To keep that
 working on modern Windows (and eventually without the Windows legacy feature),
 the repo also contains:
 
-* `directplay-shim/` — a transparent DirectPlay8 capture shim used to record
-  exactly what the game asks of DirectPlay (ground truth for the replacement).
-* `directplay-replace/` — a real DirectPlay8 replacement DLL. The solo-host
-  path is implemented and live-verified; two-player UDP transport is the next
-  phase. Build with `build.bat`, activate per-user (no admin) with
-  `register.ps1`. See [DIRECTPLAY_REPLACEMENT.md](DIRECTPLAY_REPLACEMENT.md).
+* `directplay-relay/` — the DirectPlay8 replacement in use (`dpnetrelay.dll`,
+  our own implementation of the peer and address interfaces; it imports only
+  ws2_32, advapi32 and kernel32). Every player, host included, talks outgoing
+  UDP to the relay in `tw1mp/relay.py`, so nobody needs an open port and the
+  Windows DirectPlay is not used. The game loads it through TWFix `[net]`
+  (CoCreateInstance hook in the game process, no COM registration). See
+  [directplay-relay/README.md](directplay-relay/README.md).
+* `archive/` — earlier stages, kept for reference, not built or shipped:
+  `directplay-shim/` (capture shim of the first measurements),
+  `directplay-replace/` (solo-host replacement, predecessor of
+  `directplay-relay`), `directplay-capture/` (two-player capture shim).
+  History in [DIRECTPLAY_REPLACEMENT.md](DIRECTPLAY_REPLACEMENT.md).
+  `client-setup/TW1MP-Setup.ps1` still downloads the old
+  `directplay-replace/dpnetreplace.dll`; the installer is replaced in a later
+  step (plan step 8).
 * `tools/` — `directplay-fix.bat` (repairs the Windows DirectPlay component;
   fixes the `dpnet.dll` crash on session start) and `firewall-allow.bat`
   (opens the lobby port for LAN clients). Both self-elevate via UAC.

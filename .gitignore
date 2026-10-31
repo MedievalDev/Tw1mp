@@ -9,8 +9,13 @@ Config.ini
 *.log
 tools/directplay-fix-log.txt
 directplay_fix_log.txt
-# Native build intermediates (the built .dll is committed for convenience)
+# Native build intermediates and binaries. Only the shipped relay DLL is
+# committed (Marco 31.10.2026); everything else is built from source.
 *.obj
 *.exp
 *.lib
 *.exe
+*.pdb
+*.ilk
+*.dll
+!directplay-relay/dpnetrelay.dll

@@ -1,0 +1,4 @@
+LIBRARY dpnetcapture
+EXPORTS
+    DllGetClassObject   PRIVATE
+    DllCanUnloadNow     PRIVATE

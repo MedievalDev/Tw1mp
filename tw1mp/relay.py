@@ -10,7 +10,7 @@ between the members of a session. It is the same idea the official servers'
 NAT resolver used, kept deliberately small.
 
 The relay is transport-only. It never inspects or needs to understand the
-DirectPlay payload the two `dpnetreplace` DLLs exchange - it just moves the
+DirectPlay payload the two `dpnetrelay` DLLs exchange - it just moves the
 opaque inner bytes between the members of a session, keyed by a session id
 it hands out. The reliability/ordering the game needs is provided end-to-end
 by the DLLs themselves; the relay may drop a datagram exactly like the

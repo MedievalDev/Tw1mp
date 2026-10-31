@@ -186,7 +186,7 @@ Testen mit zwei echten Clients.
 
 ## Phase 0 ABGESCHLOSSEN — Ground-Truth-Mitschnitt (verifiziert)
 
-Der korrigierte Capture-Shim (`directplay-shim/dpnetshim.cpp`, compiler-
+Der korrigierte Capture-Shim (`archive/directplay-shim/dpnetshim.cpp`, compiler-
 erzeugte Vtable aus dem Wine-Header, kein ASM-Thunk, Message-Handler in
 `Initialize` gewrappt) lief **stabil durch eine komplette MP-Session** —
 Login, Stadt, F12→F12, Map geladen und spielbar. Damit ist bewiesen:
@@ -228,7 +228,7 @@ Phasen 3/4 (echtes UDP + 2. Client) mit zweitem Test-Rechner.
 
 ## Phase 1 ABGESCHLOSSEN — Solo-Host-Replacement läuft (verifiziert)
 
-`directplay-replace/dpnetreplace.cpp` ist eine echte DirectPlay8-Ersatz-DLL
+`archive/directplay-replace/dpnetreplace.cpp` ist eine echte DirectPlay8-Ersatz-DLL
 (kein Shim): eigene Implementierungen von `IDirectPlay8Peer` (die 10
 genutzten Methoden + 24 `DPNERR_UNSUPPORTED`-Stubs) und
 `IDirectPlay8Address` (SP/Komponenten/URL-Bau), mit Loopback-Message-

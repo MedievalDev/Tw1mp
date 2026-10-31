@@ -1,6 +1,6 @@
 // dpnetrelay - DirectPlay8 replacement for Two Worlds 1 with a relay transport.
 //
-// Successor of directplay-replace/dpnetreplace.cpp. The COM shell (Peer +
+// Successor of archive/directplay-replace/dpnetreplace.cpp. The COM shell (Peer +
 // Address objects, compiler-generated vtables, message dispatch on a worker
 // thread, RECEIVE buffer ownership) is the proven part of the old DLL and
 // is kept. What is new is the transport underneath:
@@ -18,7 +18,7 @@
 //     sends go straight through. Loopback follows stock DirectPlay: a send
 //     to the all-players group also reaches the sender unless
 //     DPNSEND_NOLOOPBACK is set (verified against the Windows dpnet.dll by
-//     directplay-capture/test_capture.cpp).
+//     archive/directplay-capture/test_capture.cpp).
 //   * Player bookkeeping the game may rely on with a second player:
 //     GetPeerInfo, GetPlayerContext, EnumPlayersAndGroups,
 //     GetApplicationDesc, GetConnectionInfo, GetSendQueueInfo, GetCaps.

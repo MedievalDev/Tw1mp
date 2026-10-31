@@ -1,6 +1,6 @@
 # dpnetrelay — DirectPlay8-Ersatz mit Relay-Transport
 
-Nachfolger von `directplay-replace/` (das bleibt unverändert liegen). Gleiche
+Nachfolger von `archive/directplay-replace/` (das bleibt unverändert liegen). Gleiche
 COM-Hülle, neuer Transport: die Spielsitzung läuft nicht mehr von PC zu PC,
 sondern jeder Spieler, Host eingeschlossen, spricht **ausgehend per UDP mit
 dem TW1MP-Relay** (`tw1mp/relay.py`), das die Pakete zwischen den
@@ -58,7 +58,7 @@ zurückbringt; daraus kommt die Rundlaufzeit je Spieler
 gehen sofort raus und werden nicht gepuffert, ein Send-Timeout (V9) läuft
 darum nie ab. Loopback wie im Windows-DirectPlay: ein Send an die
 Alle-Spieler-Gruppe kommt auch beim Absender an, außer mit
-`DPNSEND_NOLOOPBACK` (mit `directplay-capture/test_capture.cpp` am echten
+`DPNSEND_NOLOOPBACK` (mit `archive/directplay-capture/test_capture.cpp` am echten
 `dpnet.dll` nachgemessen).
 
 Spieler kennt nur, wen der Host angekündigt hat (Roster im WELCOME oder
@@ -147,7 +147,7 @@ Fragmentierung großer Pakete (V10: gemessen höchstens 311 Byte, größere
 Datagramme zerlegt IP selbst), Hole-Punching.
 
 Zwei Annahmen sind bewusst an einer Stelle gebündelt, damit sie nach dem
-Zwei-Spieler-Mitschnitt (`directplay-capture/CAPTURE-GUIDE.md`) mit einer
+Zwei-Spieler-Mitschnitt (`archive/directplay-capture/CAPTURE-GUIDE.md`) mit einer
 Zeile korrigierbar sind: die Reihenfolge der Meldungen beim Beitritt
 (`HandleInner`, Fall `IN_WELCOME`: erst CREATE_PLAYER lokal, dann die
 anderen, dann CONNECT_COMPLETE) und die Loopback-Regel in `SendTo`.

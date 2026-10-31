@@ -1,7 +1,7 @@
 """Protocol tests for the UDP game-session relay.
 
 Each test drives the relay through raw UDP sockets standing in for the two
-`dpnetreplace` DLLs, so the exact wire contract the DLL must implement is
+`dpnetrelay` DLLs, so the exact wire contract the DLL must implement is
 pinned here.
 """
 

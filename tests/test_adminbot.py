@@ -87,11 +87,11 @@ class TestAdminBot(unittest.TestCase):
     def test_answers_chat_commands(self):
         cli = self._join()
         cli.wait_for(b'Willkommen', timeout=8)
-        self.assertIn(b'Befehle:', self._ask(cli, '!help', b'Befehle:'))
-        self.assertIn(b'Online (1): alice',
-                      self._ask(cli, '!players', b'Online ('))
-        self.assertIn(b'Server laeuft seit',
-                      self._ask(cli, '!uptime', b'Server laeuft'))
+        # command set since 27.07.2026 (946702b): !help, !info, !web, !gilden
+        self.assertIn(b'!info = Serverstatus',
+                      self._ask(cli, '!help', b'!info = '))
+        reply = self._ask(cli, '!players', b'online (')
+        self.assertIn(b'1 online (alice), seit ', reply)
 
     def test_announces_website_and_info_commands(self):
         cli = self._join()
@@ -100,18 +100,19 @@ class TestAdminBot(unittest.TestCase):
                       cli.wait_for(b'Infos', timeout=8))
         checks = [
             ('!web', b'twmp.alchemy-fox.de'),
-            ('!commands', b'buglord'),          # in-game console command list
-            ('!settings', b'FarPlane'),         # set.txt view-distance tuning
-            ('!server', b'Spieler online'),
+            ('!commands', b'!gilden = Gildenliste'),   # alias of !help
+            ('!server', b'online ('),                  # alias of !info
+            ('!gilden', b'Gilden'),
         ]
         for message, marker in checks:
             self.assertIn(marker, self._ask(cli, message, marker), message)
 
-    def test_discord_is_honest_when_unset(self):
+    def test_discord_falls_back_to_website_when_unset(self):
         cli = self._join()
         cli.wait_for(b'Infos', timeout=8)
-        reply = self._ask(cli, '!discord', b'Discord')
-        self.assertIn(b'noch nicht eingerichtet', reply)
+        reply = self._ask(cli, '!discord', b'Website:')
+        self.assertIn(b'twmp.alchemy-fox.de', reply)
+        self.assertNotIn(b'Discord:', reply)
 
     def test_stays_silent_on_ordinary_chat(self):
         cli = self._join()
