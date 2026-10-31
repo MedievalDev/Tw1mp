@@ -95,11 +95,15 @@ def guild_rank_points(seed=0):
     return (1153721648, 409151997, 1543387035, 1810309313)
 
 
-def server_welcome_packet(serial, title, motd, seed=0):
+def server_welcome_packet(serial, title, motd, seed=0, guild=''):
     head = struct.pack('<I', 0) + bytes([0x55, 0xA6, 0xD8, 0x3B])
     tail = bytes(49)
     tail += gen64(serial)
-    tail += struct.pack('<6I', 0, seed, *guild_rank_points(seed))
+    # The player's own guild, a Delphi string straight after the serial
+    # response (exe 0x7258bb -> client+0x166c). Empty means no guild; the
+    # chat list only offers the guild channel when this is set.
+    tail += make_dstr(guild)
+    tail += struct.pack('<5I', seed, *guild_rank_points(seed))
     return compress_packet(head + make_dstr(title) + make_dstr(motd) + tail)
 
 

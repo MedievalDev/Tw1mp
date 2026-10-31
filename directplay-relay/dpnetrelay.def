@@ -1,0 +1,9 @@
+LIBRARY dpnetrelay
+EXPORTS
+    DllGetClassObject   PRIVATE
+    DllCanUnloadNow     PRIVATE
+    DpnTestSetDrop      PRIVATE
+    DpnTestSetJoinTimeout PRIVATE
+    DpnTestSetRelaySilence PRIVATE
+    DpnTestSetPeerLost  PRIVATE
+    DpnTestRebind       PRIVATE

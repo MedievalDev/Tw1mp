@@ -193,7 +193,7 @@ class ConnectionHandler(socketserver.BaseRequestHandler):
             if err == database.OK:
                 cfg = self.server.config
                 self.request.sendall(server_welcome_packet(
-                    self.SK, cfg.title, cfg.motd))
+                    self.SK, cfg.title, cfg.motd, guild=self.user.guild))
             else:
                 msg = _LOGIN_ERRORS.get(err, 'Login failed')
                 log.info('Login failed for %r from %s: %s',

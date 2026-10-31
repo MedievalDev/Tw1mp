@@ -52,14 +52,17 @@ class ServerFixture(unittest.TestCase):
         return cli
 
     def join_channel(self, cli, pos='1000#2000'):
+        self.join_town(cli, CHANNEL, pos)
+
+    def join_town(self, cli, channel, pos='1000#2000'):
         cli.send_cmd('/leavegamechannel "1"')
         self.assertIn(b'$gamechannel', cli.wait_for(b'$gamechannel'))
-        cli.send_cmd(f'/requestjoingamechannel "{CHANNEL}"')
-        self.assertIn(f'/requestjoingamechannel "{CHANNEL}" "1"'.encode(),
+        cli.send_cmd(f'/requestjoingamechannel "{channel}"')
+        self.assertIn(f'/requestjoingamechannel "{channel}" "1"'.encode(),
                       cli.wait_for(b'/requestjoingamechannel'))
-        cli.send_cmd(f'/joingamechannel "{CHANNEL}" "{pos}"')
+        cli.send_cmd(f'/joingamechannel "{channel}" "{pos}"')
         got = cli.wait_for(b'/joinchatchannel')
-        self.assertIn(f'/joingamechannel "{CHANNEL}"'.encode(), got)
+        self.assertIn(f'/joingamechannel "{channel}"'.encode(), got)
         self.assertIn(b'/joinchatchannel "translateNetCityMainChannel"', got)
         self.assertIn(b'$chatchannel', got)
 
@@ -182,14 +185,34 @@ class TestChannelsAndChat(ServerFixture):
         alice.wait_for(b'/joinchatchannel "Geheim"')
         bob.drain(0.4)
         bob.send_cmd('/joinchatchannel "Geheim" "falsch" "0"')
-        self.assertIn(b'/error badChatPassword', bob.wait_for(b'/error'))
+        # token from the client's /error table (exe 0xa84888)
+        self.assertIn(b'/error invalidPasswordChannel "Geheim"',
+                      bob.wait_for(b'/error'))
+        bob.send_cmd('/joinchatchannel "Geheim" "losung" "0"')
+        got = bob.wait_for(b'/joinchatchannel "Geheim"')
+        # field 2 keeps the lock in the client's list
+        self.assertIn(b'/joinchatchannel "Geheim" "XXX" "2"', got)
+        self.assertIn(b'$chatchanneluser "alice"', got)
 
-    def test_unknown_channel_without_create_flag_is_ignored(self):
+    def test_unknown_channel_without_create_flag(self):
         alice = self.connect('alice')
         self.join_channel(alice)
         alice.drain(0.4)
         alice.send_cmd('/joinchatchannel "GibtsNicht" "" "0"')
-        self.assertNotIn(b'GibtsNicht', alice.drain(0.5))
+        self.assertIn(b'/error channelNotFound "GibtsNicht"',
+                      alice.wait_for(b'/error'))
+
+    def test_create_existing_channel(self):
+        alice = self.connect('alice')
+        bob = self.connect('bob')
+        self.join_channel(alice)
+        self.join_channel(bob)
+        alice.send_cmd('/joinchatchannel "Runde" "" "1"')
+        alice.wait_for(b'/joinchatchannel "Runde"')
+        bob.drain(0.4)
+        bob.send_cmd('/joinchatchannel "Runde" "" "1"')
+        self.assertIn(b'/error channelAlreadyExist "Runde"',
+                      bob.wait_for(b'/error'))
 
     def test_leave_broadcasts_removal(self):
         alice = self.connect('alice')
@@ -331,7 +354,7 @@ class TestGames(ServerFixture):
         got = bob.wait_for(b'/error')
         self.assertIn(b'/error badGamePassword "Secret"', got)
 
-    def test_duplicate_game_name_declined_silently(self):
+    def test_duplicate_game_name(self):
         alice = self.connect('alice')
         bob = self.connect('bob')
         self.join_channel(alice)
@@ -340,10 +363,58 @@ class TestGames(ServerFixture):
         bob.wait_for(b'$game')
         bob.drain(0.4)
         bob.send_cmd('/requestcreategame "MyGame"')
-        got = bob.drain(0.6)
-        # reference-server parity: no bytes at all for a name collision
+        got = bob.wait_for(b'/error')
         self.assertNotIn(b'/creategame', got)
-        self.assertNotIn(b'/error', got)
+        self.assertIn(b'/error gameAlreadyExist "MyGame"', got)
+
+    def test_full_game_refused(self):
+        alice = self.connect('alice')
+        bob = self.connect('bob')
+        carol = self.connect('carol')
+        for c in (alice, bob, carol):
+            self.join_channel(c)
+        alice.send_cmd('/requestcreategame "Duo"')
+        alice.wait_for(b'/creategame')
+        alice.send_cmd('/creategame "Duo" "" "Net_M_01 null 0 1" '
+                       '"translateNet_M_01" "1" "0" "0" "2" '
+                       '"x-directplay:/1.0/host/127.0.0.1"')
+        bob.wait_for(b'$game "Duo"')
+        bob.send_cmd('/joingame "Duo" ""')
+        bob.wait_for(b'/joingame')
+        carol.drain(0.4)
+        carol.send_cmd('/joingame "Duo" ""')
+        got = carol.wait_for(b'/error')
+        self.assertIn(b'/error cantJoinGame "Duo"', got)
+        self.assertNotIn(b'/joingame', got)
+
+    def test_join_missing_game(self):
+        alice = self.connect('alice')
+        self.join_channel(alice)
+        alice.drain(0.4)
+        alice.send_cmd('/joingame "Weg" ""')
+        self.assertIn(b'/error gameNotExist "Weg"', alice.wait_for(b'/error'))
+
+    def test_setgameparams_is_accepted(self):
+        alice = self.connect('alice')
+        self.join_channel(alice)
+        self.create_game(alice)
+        alice.drain(0.4)
+        alice.send_cmd('/setgameparams "a" "b"')
+        alice.send_cmd('/whois "alice"')
+        alice.wait_for(b'/whois')
+        game = self.server.state.gameChannels[CHANNEL].games['MyGame']
+        self.assertEqual(game.params, ('a', 'b'))
+
+    def test_game_command_to_offline_user(self):
+        # The open trade dialog of the sender must learn that the partner
+        # is gone (exe 0x65cff3 shows "partner left").
+        alice = self.connect('alice')
+        self.join_channel(alice)
+        alice.drain(0.4)
+        blob = b'\x01\x02\x03\x04'
+        alice.send_cmd('/gamecommandtouser "nobody" "4"', blob=blob)
+        self.assertIn(b'&gamechanneluser "nobody"',
+                      alice.wait_for(b'&gamechanneluser'))
 
     def test_leave_game_removes_it(self):
         alice = self.connect('alice')
@@ -462,6 +533,117 @@ class TestGuilds(ServerFixture):
         alice.send_cmd('/leaveguild')
         self.assertIn(b'/userguild "alice" ""', alice.wait_for(b'/userguild'))
         self.assertIsNone(self.server.db.member_guilds().get('alice'))
+
+    def test_login_carries_own_guild(self):
+        # Without it the chat list has no guild channel row until the
+        # player triggers a guild command (exe 0x7258bb, 0x5c96a4).
+        from tw1mp.protocol import parse_dstr
+        self.server.db.create_guild('Fuchsbau')
+        self.server.db.set_member_guild('alice', 'Fuchsbau')
+        cli = TestClient(self.port, serial=b'alicealc', guid=b'alice' * 3 + b'a')
+        self.clients.append(cli)
+        cli.handshake()
+        err, res = cli.login('alice', 'pw')
+        self.assertEqual(err, 0)
+        _, off = parse_dstr(res, 8)
+        _, off = parse_dstr(res, off)
+        guild, _ = parse_dstr(res, off + 49 + 64)
+        self.assertEqual(guild, 'Fuchsbau')
+
+    def test_leave_guild_like_the_client(self):
+        # The 1.7 client leaves with /joinguild "" "1" "1" (exe 0x5d297f);
+        # /leaveguild does not exist in the exe.
+        self.server.db.create_guild('Fuchsbau')
+        self.server.db.set_member_guild('alice', 'Fuchsbau')
+        alice = self.connect('alice')
+        bob = self.connect('bob')
+        self.join_channel(alice)
+        self.join_channel(bob)
+        bob.drain(0.4)
+        alice.send_cmd('/joinguild "" "1" "1"')
+        self.assertIn(b'/userguild "alice" ""', alice.wait_for(b'/userguild'))
+        self.assertIsNone(self.server.db.member_guilds().get('alice'))
+        # the town learns it too (the client shows guilds next to names)
+        self.assertIn(b'/userguild "alice" ""', bob.wait_for(b'/userguild'))
+
+    def test_join_after_invitation(self):
+        self.server.db.create_guild('Fuchsbau')
+        alice = self.connect('alice')
+        self.join_channel(alice)
+        alice.drain(0.4)
+        alice.send_cmd('/joinguild "Fuchsbau" "0" "0"')
+        self.assertIn(b'/userguild "alice" "Fuchsbau"',
+                      alice.wait_for(b'/userguild'))
+        self.assertEqual(self.server.db.member_guilds().get('alice'),
+                         'Fuchsbau')
+        alice.send_cmd('/joinguild "Weg" "0" "0"')
+        got = alice.wait_for(b'/error')
+        self.assertIn(b'/userguild "alice" "Fuchsbau"', got)
+        self.assertIn(b'/error guildNotFound "Weg"', got)
+
+    def test_founding_a_taken_name_is_refused_before_paying(self):
+        self.server.db.create_guild('Fuchsbau')
+        alice = self.connect('alice')
+        self.join_channel(alice)
+        alice.drain(0.4)
+        alice.send_cmd('/testcreateguild "Fuchsbau"')
+        got = alice.wait_for(b'/error')
+        self.assertIn(b'/error guildAlreadyExist "Fuchsbau"', got)
+        self.assertNotIn(b'/testcreateguild', got)
+
+    def test_guild_in_user_lists(self):
+        self.server.db.create_guild('Fuchsbau')
+        self.server.db.set_member_guild('alice', 'Fuchsbau')
+        alice = self.connect('alice')
+        bob = self.connect('bob')
+        hero = b'HERODATA' * 4
+        alice.send_cmd(f'/setuserherodata "alice" "{len(hero)}"', blob=hero)
+        self.join_channel(bob)
+        bob.drain(0.4)
+        self.join_channel(alice)
+        got = bob.wait_for(b'$chatchanneluser "alice"')
+        got += bob.wait_for(b'$gamechanneluser "alice"')
+        self.assertIn(b'$gamechanneluser "alice" "Fuchsbau" "100"', got)
+        self.assertIn(b'$chatchanneluser "alice" "Fuchsbau" "0"', got)
+        bob.send_cmd('/whois "alice"')
+        self.assertIn(b'/whois "alice" "Fuchsbau"', bob.wait_for(b'/whois'))
+
+    def test_guild_channel_spans_towns(self):
+        towns = list(self.server.state.gameChannels)
+        self.assertGreater(len(towns), 1)
+        self.server.db.create_guild('Fuchsbau')
+        self.server.db.set_member_guild('alice', 'Fuchsbau')
+        self.server.db.set_member_guild('bob', 'Fuchsbau')
+        alice = self.connect('alice')
+        bob = self.connect('bob')
+        carol = self.connect('carol')   # same town as alice, no guild
+        self.join_channel(alice)
+        self.join_channel(carol)
+        self.join_town(bob, towns[-1])
+        alice.drain(0.4)
+        bob.drain(0.4)
+        carol.drain(0.4)
+        alice.send_cmd('/joinguild "Fuchsbau" "0" "1"')
+        got = alice.wait_for(b'/joinguildchannel')
+        self.assertIn(b'/joinguildchannel "Fuchsbau" "1"', got)
+        bob.send_cmd('/joinguild "Fuchsbau" "0" "1"')
+        got = bob.wait_for(b'$chatchanneluser "alice"')
+        self.assertIn(b'/joinguildchannel "Fuchsbau" "2"', got)
+        self.assertIn(b'$chatchanneluser "bob"', alice.wait_for(b'"bob"'))
+        bob.send_cmd('/send "hallo gilde"')
+        self.assertIn(b'/send "bob" "hallo gilde"', alice.wait_for(b'/send'))
+        self.assertNotIn(b'hallo gilde', carol.drain(0.5))
+        # not a member: no way in
+        carol.send_cmd('/joinguild "Fuchsbau" "0" "1"')
+        self.assertIn(b'/error guildNotFound "Fuchsbau"',
+                      carol.wait_for(b'/error'))
+        # leaving the guild from inside its channel goes back to the town chat
+        bob.send_cmd('/joinguild "" "1" "1"')
+        got = bob.wait_for(b'/joinchatchannel')
+        self.assertIn(b'/userguild "bob" ""', got)
+        self.assertIn(b'/joinchatchannel "translateNetCityMainChannel"', got)
+        self.assertIn(b'&chatchanneluser "bob"',
+                      alice.wait_for(b'&chatchanneluser'))
 
 
 class TestBrokenClientId(ServerFixture):

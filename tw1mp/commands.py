@@ -11,7 +11,7 @@ read it from the socket *before* taking the state lock.
 import logging
 import re
 
-from .lobby import _without
+from .lobby import DEFAULT_CHATS, GuildChat, _without
 from .protocol import em
 
 log = logging.getLogger('tw1mp.cmd')
@@ -59,6 +59,7 @@ class CommandParser:
             '/setuserherodata': self._setuserherodata,
             '/gamecommandtouser': self._gamecommandtouser,
             '/joingame': self._joingame,
+            '/setgameparams': self._setgameparams,
         }
 
     def parse(self, data, con):
@@ -148,10 +149,42 @@ class CommandParser:
         # This is also how the founding dialog announces itself: the actual
         # creation arrives afterwards as /joinguild with the same name, so
         # remember the intent to tell it apart from joining someone else's.
+        # The client deducts the gold before it sends the founding /joinguild
+        # (exe 0x5d3426), so a taken or empty name is refused here, before
+        # anything is paid.
         name = _arg(res, 1).strip()
+        if not name:
+            return em('/error invalidGuildName ""')
+        if name in {g['name'] for g in self.server.db.guild_standings()}:
+            return em(f'/error guildAlreadyExist "{name}"')
         con.user.pending_guild = name
         return em(f'/testcreateguild "{name}" '
                   f'"{self.server.config.guild_price}"')
+
+    def _set_guild(self, con, guild):
+        """Store con's guild and tell the town. Returns the reply for con.
+
+        /userguild goes to everyone in the town, not only to the player:
+        the client also reads it for other users (exe 0x73023e -> vt+0x48)
+        and shows the guild next to their name. A player who leaves the
+        guild of the guild chat they sit in goes back to the town chat."""
+        self.server.db.set_member_guild(con.user.name, guild)
+        msg = em(f'/userguild "{con.user.name}" "{guild}"')
+        back = b''
+        with self.server.state.lock:
+            con.user.guild = guild
+            chat = con.user.chatchannel
+            if isinstance(chat, GuildChat) and chat.name != guild:
+                town = con.user.gamechannel
+                if town:
+                    back = town.joinChat(con, DEFAULT_CHATS[0])
+                else:
+                    con.user.leaveChat()
+            if con.user.gamechannel:
+                tg = _without(con.user.gamechannel.userlist, con)
+                if tg:
+                    self.server.dist.add({'target': tg, 'message': msg})
+        return msg + back
 
     def _createguild(self, con, res):
         name = _arg(res, 1).strip()
@@ -161,37 +194,48 @@ class CommandParser:
         if created:
             log.info('%s founded guild %r', con.user.name, name)
         # Joining is what the client cares about; founding implies membership.
-        self.server.db.set_member_guild(con.user.name, name)
-        return em(f'/userguild "{con.user.name}" "{name}"')
+        return self._set_guild(con, name)
 
     def _joinguild(self, con, res):
-        # Carries the guild name in one of the first arguments. It is sent
-        # both for joining an existing guild and, right after
-        # /testcreateguild, for founding a new one.
-        known = {g['name'] for g in self.server.db.guild_standings()}
-        pending = getattr(con.user, 'pending_guild', '')
-        wanted = ''
-        for i in (1, 2, 3):
-            cand = _arg(res, i).strip()
-            if not cand:
-                continue
-            if cand in known:
-                wanted = cand
-                break
-            if cand == pending:
-                if self.server.db.create_guild(cand):
-                    log.info('%s founded guild %r', con.user.name, cand)
-                wanted = cand
-                break
+        # /joinguild "name" "a" "b" (format 0x9e0764). The exe sends it from
+        # four places, told apart by the fields:
+        #   ""  "1" "1"  leave the guild (0x5d297f)
+        #   "G" "1" "1"  found G, after /testcreateguild "G" (0x5d3464)
+        #   "G" "0" "1"  enter the guild channel (0x5c8fad)
+        #   "G" "0" "0"  join G after accepting an invitation (0x424976)
+        # The invitation itself travels as game command 0xfd inside
+        # /gamecommandtouser, so the server cannot check it here.
+        name = _arg(res, 1).strip()
+        flags = (_arg(res, 2), _arg(res, 3))
+        pending = con.user.pending_guild
         con.user.pending_guild = ''
-        if wanted:
-            self.server.db.set_member_guild(con.user.name, wanted)
+        if not name:
+            return self._set_guild(con, '')
+        if flags == ('0', '1'):
+            return self._guildchannel(con, name)
+        if name in {g['name'] for g in self.server.db.guild_standings()}:
+            return self._set_guild(con, name)
+        if name == pending:
+            if self.server.db.create_guild(name):
+                log.info('%s founded guild %r', con.user.name, name)
+            return self._set_guild(con, name)
         current = self._guild_of(con.user.name)
-        return em(f'/userguild "{con.user.name}" "{current}"')
+        reply = em(f'/userguild "{con.user.name}" "{current}"')
+        if flags == ('0', '0'):
+            reply += em(f'/error guildNotFound "{name}"')
+        return reply
+
+    def _guildchannel(self, con, name):
+        # One chat per guild for the whole server (Marco, 25.10.2026).
+        if self._guild_of(con.user.name) != name:
+            return em(f'/error guildNotFound "{name}"')
+        with self.server.state.lock:
+            return self.server.state.guildChat(name).join(con)
 
     def _leaveguild(self, con, res):
-        self.server.db.set_member_guild(con.user.name, '')
-        return em(f'/userguild "{con.user.name}" ""')
+        # Not sent by the 1.7 client (it leaves via /joinguild "" "1" "1");
+        # kept for older tools.
+        return self._set_guild(con, '')
 
     def _joinchatchannel(self, con, res):
         # /joinchatchannel "name" "password" "create"
@@ -250,7 +294,8 @@ class CommandParser:
                     town = tcon.user.gamechannel.name
                 if tcon.user.chatchannel:
                     chatname = tcon.user.chatchannel.name
-        return em(f'/whois "{name}" "" "{town}" "{chatname}" "{email}" '
+        guild = self._guild_of(name)
+        return em(f'/whois "{name}" "{guild}" "{town}" "{chatname}" "{email}" '
                   f'"{location}" {age} {gender} "{description}"')
 
     def _update(self, con, res):
@@ -346,8 +391,21 @@ class CommandParser:
                 return None
             gm = con.user.gamechannel.games.get(_arg(res, 1))
             if gm is None:
-                return None
+                return em(f'/error gameNotExist "{_arg(res, 1)}"')
             return gm.addUser(con, _arg(res, 2))
+
+    def _setgameparams(self, con, res):
+        # /setgameparams "%s" "%s" (exe 0x72bf80), sent by the host when it
+        # changes the game settings. The /gameparams the client reads back
+        # (0x731574) has an unknown layout, so for now the values are only
+        # kept and logged instead of ending in "Unknown command".
+        with self.server.state.lock:
+            gm = con.user.game
+            if gm is not None and gm.host is con:
+                gm.params = (_arg(res, 1), _arg(res, 2))
+        log.info('%s set game params %r %r', con.user.name,
+                 _arg(res, 1), _arg(res, 2))
+        return None
 
     def _stopgame(self, con, res):
         with self.server.state.lock:
@@ -374,7 +432,13 @@ class CommandParser:
         with self.server.state.lock:
             tcon = self.server.state.activeUsers.get(target)
             if not tcon:
-                return None
+                # The partner is gone (trade, guild invitation): removing
+                # them from the sender's town list makes an open trade
+                # dialog show "partner left" (exe 0x65cff3) instead of
+                # waiting forever.
+                log.info('%s sent a game command to %s, who is offline',
+                         con.user.name, target)
+                return em(f'&gamechanneluser "{target}"')
             fulmsg = em(f'/gamecommandtouser "{con.user.name}" "{len(dat)}"') + dat
             self.server.dist.add({'target': (tcon,), 'message': fulmsg})
         return None

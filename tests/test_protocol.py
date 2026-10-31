@@ -57,6 +57,19 @@ class TestPackets(unittest.TestCase):
                          protocol.gen64(serial))
         self.assertEqual(len(res), off + 49 + 64 + 24)
 
+    def test_welcome_carries_guild(self):
+        # The client reads its own guild as a Delphi string right after the
+        # serial response (exe 0x7258bb); it used to be a fixed 0.
+        serial = bytes(range(8))
+        res = self._unwrap(protocol.server_welcome_packet(
+            serial, 'Title', 'MOTD', guild='Fuchsbau'))
+        _, off = protocol.parse_dstr(res, 8)
+        _, off = protocol.parse_dstr(res, off)
+        off += 49 + 64
+        guild, off = protocol.parse_dstr(res, off)
+        self.assertEqual(guild, 'Fuchsbau')
+        self.assertEqual(len(res), off + 20)
+
     def test_gen64_deterministic(self):
         a = protocol.gen64(bytes(range(8)))
         b = protocol.gen64(bytes(range(8)))
